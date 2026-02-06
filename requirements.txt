@@ -1,0 +1,6 @@
+streamlit
+pandas
+plotly
+passlib
+requests
+supabase
