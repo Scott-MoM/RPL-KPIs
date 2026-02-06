@@ -382,6 +382,34 @@ def _sanitize(obj):
         pass
     return obj
 
+def _norm_key(value):
+    if value is None:
+        return ""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+def _get_row_value(row, *keys):
+    if not row or not keys:
+        return None
+    try:
+        if any(k in row for k in keys):
+            for k in keys:
+                if k in row and row.get(k) not in [None, ""]:
+                    return row.get(k)
+    except Exception:
+        pass
+
+    normalized = {}
+    for k, v in row.items():
+        nk = _norm_key(k)
+        if nk and nk not in normalized:
+            normalized[nk] = v
+
+    for k in keys:
+        nk = _norm_key(k)
+        if nk in normalized and normalized[nk] not in [None, ""]:
+            return normalized[nk]
+    return None
+
 def _read_uploaded_csv(uploaded_file):
     if uploaded_file is None:
         return []
@@ -399,10 +427,10 @@ def import_beacon_uploads(admin_client, uploads):
     people_seen = {}
     for r in uploads.get("people", []):
         payload = _sanitize(dict(r))
-        payload["id"] = r.get("Record ID")
-        payload["created_at"] = _clean_ts(r.get("Created date"))
-        payload["type"] = _to_list(r.get("Type"))
-        payload["c_region"] = _to_list(r.get("Region"))
+        payload["id"] = _get_row_value(r, "Record ID", "ID", "Id")
+        payload["created_at"] = _clean_ts(_get_row_value(r, "Created date", "Created", "Created at"))
+        payload["type"] = _to_list(_get_row_value(r, "Type", "Person type", "Role", "Roles", "Tags", "Category"))
+        payload["c_region"] = _to_list(_get_row_value(r, "Region", "Location (region)", "Location (Region)", "Location Region", "Region (region)", "Region (Region)"))
         if payload.get("id"):
             people_seen[payload["id"]] = {"id": payload["id"], "payload": payload, "created_at": payload.get("created_at"), "updated_at": now_iso}
 
@@ -410,10 +438,10 @@ def import_beacon_uploads(admin_client, uploads):
     org_seen = {}
     for r in uploads.get("organization", []):
         payload = _sanitize(dict(r))
-        payload["id"] = r.get("Record ID")
-        payload["created_at"] = _clean_ts(r.get("Created date"))
-        payload["type"] = r.get("Type")
-        payload["c_region"] = _to_list(r.get("Region"))
+        payload["id"] = _get_row_value(r, "Record ID", "ID", "Id")
+        payload["created_at"] = _clean_ts(_get_row_value(r, "Created date", "Created", "Created at"))
+        payload["type"] = _get_row_value(r, "Type", "Organisation type", "Organization type", "Category")
+        payload["c_region"] = _to_list(_get_row_value(r, "Region", "Location (region)", "Location (Region)", "Location Region", "Region (region)", "Region (Region)"))
         if payload.get("id"):
             org_seen[payload["id"]] = {"id": payload["id"], "payload": payload, "created_at": payload.get("created_at"), "updated_at": now_iso}
 
@@ -421,11 +449,11 @@ def import_beacon_uploads(admin_client, uploads):
     event_seen = {}
     for r in uploads.get("event", []):
         payload = _sanitize(dict(r))
-        payload["id"] = r.get("Record ID")
-        payload["start_date"] = _clean_ts(r.get("Start date"))
-        payload["type"] = r.get("Type")
-        payload["c_region"] = _to_list(r.get("Location (region)"))
-        payload["number_of_attendees"] = r.get("Number of attendees")
+        payload["id"] = _get_row_value(r, "Record ID", "ID", "Id")
+        payload["start_date"] = _clean_ts(_get_row_value(r, "Start date", "Start", "Date", "Event date"))
+        payload["type"] = _get_row_value(r, "Type", "Event type", "Activity type", "Category")
+        payload["c_region"] = _to_list(_get_row_value(r, "Location (region)", "Location (Region)", "Location Region", "Region", "Region (region)", "Region (Region)"))
+        payload["number_of_attendees"] = _get_row_value(r, "Number of attendees", "Attendees", "Participants", "Total participants", "Participant count")
         if payload.get("id"):
             event_seen[payload["id"]] = {
                 "id": payload["id"],
@@ -439,9 +467,9 @@ def import_beacon_uploads(admin_client, uploads):
     payment_seen = {}
     for r in uploads.get("payment", []):
         payload = _sanitize(dict(r))
-        payload["id"] = r.get("Record ID")
-        payload["payment_date"] = _clean_ts(r.get("Payment date"))
-        payload["amount"] = r.get("Amount (value)")
+        payload["id"] = _get_row_value(r, "Record ID", "ID", "Id")
+        payload["payment_date"] = _clean_ts(_get_row_value(r, "Payment date", "Date", "Received date"))
+        payload["amount"] = _get_row_value(r, "Amount (value)", "Amount", "Value")
         if payload.get("id"):
             payment_seen[payload["id"]] = {"id": payload["id"], "payload": payload, "payment_date": payload.get("payment_date"), "updated_at": now_iso}
 
@@ -449,10 +477,10 @@ def import_beacon_uploads(admin_client, uploads):
     grant_seen = {}
     for r in uploads.get("grant", []):
         payload = _sanitize(dict(r))
-        payload["id"] = r.get("Record ID")
-        payload["close_date"] = _clean_ts(r.get("Award date"))
-        payload["amount"] = r.get("Amount granted (value)") or r.get("Amount requested (value)") or r.get("Value (value)")
-        payload["stage"] = r.get("Stage")
+        payload["id"] = _get_row_value(r, "Record ID", "ID", "Id")
+        payload["close_date"] = _clean_ts(_get_row_value(r, "Award date", "Close date", "Decision date"))
+        payload["amount"] = _get_row_value(r, "Amount granted (value)", "Amount requested (value)", "Value (value)", "Amount", "Value")
+        payload["stage"] = _get_row_value(r, "Stage", "Status", "Grant stage")
         if payload.get("id"):
             grant_seen[payload["id"]] = {"id": payload["id"], "payload": payload, "close_date": payload.get("close_date"), "updated_at": now_iso}
 
@@ -918,6 +946,16 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "media_coverage": 0,
             "newsletters_sent": 0,
             "open_rate": 0
+        },
+        "_debug": {
+            "region_people": len(region_people),
+            "volunteers": len(volunteers),
+            "steering_volunteers": len(steering_volunteers),
+            "region_events": len(region_events),
+            "walk_events": walks_delivered,
+            "participants": participants,
+            "region_grants": len(region_grants),
+            "bids_submitted": bids_submitted
         }
     }
 
@@ -1471,6 +1509,23 @@ def main_dashboard():
     st.title(f"Region Dashboard: {data['region']}")
     # Removed header metadata captions per request
     st.markdown('<div class="section-card"><span class="badge">Live KPI Overview</span></div>', unsafe_allow_html=True)
+
+    show_debug = False
+    if st.session_state.get("role") in ["Admin", "Manager", "RPL"]:
+        show_debug = st.sidebar.checkbox("Show KPI Debug", value=False)
+    if show_debug:
+        debug = data.get("_debug") or {}
+        st.subheader("KPI Debug Counts")
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("People in Region", debug.get("region_people", 0))
+        d2.metric("Volunteers", debug.get("volunteers", 0))
+        d3.metric("Steering Volunteers", debug.get("steering_volunteers", 0))
+        d4.metric("Events in Region", debug.get("region_events", 0))
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Walk Events", debug.get("walk_events", 0))
+        e2.metric("Participants", debug.get("participants", 0))
+        e3.metric("Grants in Region", debug.get("region_grants", 0))
+        e4.metric("Bids Submitted", debug.get("bids_submitted", 0))
     
 
     # Tabs
