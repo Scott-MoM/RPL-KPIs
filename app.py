@@ -334,6 +334,22 @@ def get_admin_client():
     except Exception:
         return None
 
+# --- AUDIT LOGGING HELPER ---
+def log_audit_event(action, details=None):
+    """Utility to record administrative actions to the audit log."""
+    if DB_TYPE == 'supabase':
+        try:
+            DB_CLIENT.table("audit_logs").insert({
+                "user_email": st.session_state.get("email", "System"),
+                "action": action,
+                "details": details or {},
+                "region": st.session_state.get("region", "Global")
+            }).execute()
+        except Exception as e:
+            # We print instead of st.error to avoid UI clutter on background ops
+            print(f"Audit Log Error: {e}")
+
+# --- DATA HELPERS ---
 def _clean_ts(value):
     if value is None:
         return None
@@ -604,6 +620,10 @@ def create_user(name, email, password, role, region):
                 "name": name,
                 "must_change_password": True
             }).execute()
+
+            # --- AUDIT LOG ---
+            log_audit_event("User Created", {"target_email": email, "role": role, "region": region})
+            
             return True
         except Exception as e:
             st.error(f"Error creating user: {e}")
@@ -637,6 +657,10 @@ def update_user_role(email, new_role):
             return
         role_id = role_resp.data[0]["id"]
         admin_client.table('user_roles').update({"role_id": role_id}).eq('email', email).execute()
+        
+        # --- AUDIT LOG ---
+        log_audit_event("Role Updated", {"target_email": email, "new_role": new_role})
+        
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
@@ -658,6 +682,10 @@ def delete_user(email):
             user_id = role_resp.data[0]["user_id"]
             admin_client.table('user_roles').delete().eq('email', email).execute()
             admin_client.auth.admin.delete_user(user_id)
+            
+            # --- AUDIT LOG ---
+            log_audit_event("User Deleted", {"target_email": email})
+            
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
@@ -678,6 +706,10 @@ def reset_password(email, new_password):
         if role_resp.data:
             user_id = role_resp.data[0]["user_id"]
             admin_client.auth.admin.update_user_by_id(user_id, {"password": new_password})
+            
+            # --- AUDIT LOG ---
+            log_audit_event("Password Reset", {"target_email": email})
+
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
@@ -1226,6 +1258,10 @@ def admin_dashboard():
                             "grant": _read_uploaded_csv(grant_file),
                         }
                         result = import_beacon_uploads(admin_client, uploads)
+                        
+                        # --- AUDIT LOG ---
+                        log_audit_event("Data Imported", result)
+                        
                         st.success(f"Imported: {result}")
                         st.session_state["show_upload_dialog"] = False
                 _upload_dialog()
@@ -1239,6 +1275,55 @@ def admin_dashboard():
             st.cache_data.clear()
             st.success("Cache cleared. Reloading...")
             st.rerun()
+
+    # --- AUDIT LOG UI ---
+    st.markdown("---")
+    st.subheader("System Audit Log")
+
+    if DB_TYPE == 'supabase':
+        # 1. Search & Filter Controls
+        col_search, col_filter = st.columns([3, 1])
+        search_term = col_search.text_input("Search Logs (User, Action, or Details)", placeholder="e.g. 'User Created' or 'scott@...'")
+        action_filter = col_filter.selectbox("Filter by Action", ["All", "User Created", "User Deleted", "Role Updated", "Data Imported", "Password Reset"])
+
+        # 2. Build Query
+        query = DB_CLIENT.table("audit_logs").select("*").order("created_at", desc=True).limit(200)
+        
+        if action_filter != "All":
+            query = query.eq("action", action_filter)
+            
+        # 3. Fetch & Display
+        try:
+            resp = query.execute()
+            data = resp.data
+            
+            if data:
+                df_log = pd.DataFrame(data)
+                
+                # Convert timestamps to readable format
+                df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Client-side Search (for flexibility with JSON/Text columns)
+                if search_term:
+                    search_term = search_term.lower()
+                    mask = (
+                        df_log['user_email'].str.lower().str.contains(search_term) |
+                        df_log['action'].str.lower().str.contains(search_term) |
+                        df_log['details'].astype(str).str.lower().str.contains(search_term)
+                    )
+                    df_log = df_log[mask]
+
+                st.dataframe(
+                    df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No logs found.")
+        except Exception as e:
+            st.error(f"Failed to load logs: {e}")
+    else:
+        st.info("Audit logging is only enabled in Supabase mode.")
 
 def get_time_filters():
     st.sidebar.markdown("### Time Filters")
