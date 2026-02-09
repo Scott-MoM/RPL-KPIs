@@ -915,14 +915,54 @@ def compute_kpis(region, people, organisations, events, payments, grants):
 
     # 6. Process Delivery (Events)
     region_events = [e for e in events if is_in_region(e)]
+
+    def _to_int(value):
+        if value is None:
+            return 0
+        s = str(value).strip().replace(",", "")
+        if not s:
+            return 0
+        try:
+            return int(float(s))
+        except ValueError:
+            return 0
+
+    def _event_type(event_row):
+        for key in ("type", "Type", "Event type", "Activity type", "Category"):
+            val = event_row.get(key)
+            if val is not None and str(val).strip():
+                return str(val).lower()
+        return ""
+
+    def _event_attendees(event_row):
+        for key in (
+            "number_of_attendees",
+            "Number of attendees",
+            "Attendees",
+            "Participants",
+            "Total participants",
+            "Participant count",
+            "Number attending",
+        ):
+            val = event_row.get(key)
+            if val is not None and str(val).strip():
+                return _to_int(val)
+        return 0
     
     walks_delivered = 0
     participants = 0
+    delivery_event_count = 0
     for e in region_events:
-        e_type = str(e.get('type')).lower()
-        if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session']):
+        e_type = _event_type(e)
+        if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
             walks_delivered += 1
-            participants += int(e.get('number_of_attendees') or 0)
+            delivery_event_count += 1
+            participants += _event_attendees(e)
+
+    # Fallback: if event labels are inconsistent, treat all region events as delivered.
+    if walks_delivered == 0 and region_events:
+        walks_delivered = len(region_events)
+        participants = sum(_event_attendees(e) for e in region_events)
 
     return {
         "region": region,
@@ -965,7 +1005,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "walk_events": walks_delivered,
             "participants": participants,
             "region_grants": len(region_grants),
-            "bids_submitted": bids_submitted
+            "bids_submitted": bids_submitted,
+            "delivery_events_tagged": delivery_event_count
         },
         "_raw_income": {
             "payments": region_payments,
