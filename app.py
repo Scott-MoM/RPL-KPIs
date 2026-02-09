@@ -359,6 +359,8 @@ def _clean_ts(value):
 def _to_list(value):
     if value is None:
         return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if str(v).strip()]
     try:
         if pd.isna(value):
             return []
@@ -835,6 +837,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         if region == "Global":
             return True
         tags = get_region_tags(record)
+        if not tags and record.get("region"):
+            tags = _to_list(record.get("region"))
         return any(region.lower() in str(t).lower() for t in tags)
 
     # 3. Process People (Governance)
@@ -897,9 +901,15 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     bids_submitted = sum(1 for g in region_grants if any(x in str(g.get('stage')).lower() for x in ['submitted', 'review', 'pending']))
     funds_raised_grants = sum(float(g.get('amount') or 0) for g in region_grants if str(g.get('stage')).lower() == 'won')
     
-    total_payments = 0
-    if region == "Global":
-        total_payments = sum(float(p.get('amount') or 0) for p in payments)
+    def _payment_in_region(payment):
+        if region == "Global":
+            return True
+        if is_in_region(payment):
+            return True
+        return False
+
+    region_payments = [p for p in payments if _payment_in_region(p)]
+    total_payments = sum(float(p.get('amount') or 0) for p in region_payments)
     
     total_funds = funds_raised_grants + total_payments
 
@@ -956,6 +966,10 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "participants": participants,
             "region_grants": len(region_grants),
             "bids_submitted": bids_submitted
+        },
+        "_raw_income": {
+            "payments": region_payments,
+            "grants": region_grants
         }
     }
 
@@ -1074,7 +1088,6 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
 
     result = compute_kpis(region, people, organisations, events, payments, grants)
     result["_source"] = "supabase"
-    result["_raw_income"] = {"payments": payments, "grants": grants}
     return result
 
 def get_last_refresh_timestamp():
@@ -1405,7 +1418,7 @@ def get_time_filters():
     timeframe = st.sidebar.selectbox(
         "Timeframe",
         ["All Time", "Year", "Quarter", "Month", "Week", "Custom Range"],
-        index=1
+        index=0
     )
 
     today = datetime.now().date()
@@ -1578,8 +1591,8 @@ def main_dashboard():
         st.header("Income & Funding")
         c1, c2 = st.columns(2)
         with c1:
-            st.metric("Total Funds Raised", f"Â£{data['income']['total_funds_raised']:,.2f}")
-            st.metric("In-Kind Value", f"Â£{data['income']['in_kind_value']:,}")
+            st.metric("Total Funds Raised", f"£{data['income']['total_funds_raised']:,.2f}")
+            st.metric("In-Kind Value", f"£{data['income']['in_kind_value']:,}")
         with c2:
             st.metric("Bids Submitted", data['income']['bids_submitted'])
             st.metric("Corporate Partners", data['income']['corporate_partners'])
@@ -1592,7 +1605,7 @@ def main_dashboard():
         def _to_float(val):
             if val is None:
                 return 0.0
-            s = str(val).replace("Â£", "").replace(",", "").strip()
+            s = str(val).replace("Â£", "").replace("£", "").replace(",", "").strip()
             try:
                 return float(s)
             except ValueError:
@@ -1877,3 +1890,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
