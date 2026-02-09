@@ -1591,8 +1591,8 @@ def main_dashboard():
         st.header("Income & Funding")
         c1, c2 = st.columns(2)
         with c1:
-            st.metric("Total Funds Raised", f"�{data['income']['total_funds_raised']:,.2f}")
-            st.metric("In-Kind Value", f"�{data['income']['in_kind_value']:,}")
+            st.metric("Total Funds Raised", f"£{data['income']['total_funds_raised']:,.2f}")
+            st.metric("In-Kind Value", f"£{data['income']['in_kind_value']:,}")
         with c2:
             st.metric("Bids Submitted", data['income']['bids_submitted'])
             st.metric("Corporate Partners", data['income']['corporate_partners'])
@@ -1605,7 +1605,7 @@ def main_dashboard():
         def _to_float(val):
             if val is None:
                 return 0.0
-            s = str(val).replace("£", "").replace("�", "").replace(",", "").strip()
+            s = str(val).replace("Â£", "").replace("£", "").replace(",", "").strip()
             try:
                 return float(s)
             except ValueError:
