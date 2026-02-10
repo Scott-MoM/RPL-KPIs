@@ -385,6 +385,34 @@ def _sanitize(obj):
         pass
     return obj
 
+def _coerce_money(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        for key in ("value", "amount", "total", "gross", "net"):
+            if key in value:
+                coerced = _coerce_money(value.get(key))
+                if coerced != 0.0:
+                    return coerced
+        for nested in value.values():
+            coerced = _coerce_money(nested)
+            if coerced != 0.0:
+                return coerced
+        return 0.0
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            coerced = _coerce_money(item)
+            if coerced != 0.0:
+                return coerced
+        return 0.0
+    s = str(value).replace("Â£", "").replace("£", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except Exception:
+        return 0.0
+
 def _norm_key(value):
     if value is None:
         return ""
@@ -1110,7 +1138,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             
     # Fuzzy match for grant stages
     bids_submitted = sum(1 for g in region_grants if any(x in str(g.get('stage')).lower() for x in ['submitted', 'review', 'pending']))
-    funds_raised_grants = sum(float(g.get('amount') or 0) for g in region_grants if str(g.get('stage')).lower() == 'won')
+    funds_raised_grants = sum(_coerce_money(g.get('amount')) for g in region_grants if str(g.get('stage')).lower() == 'won')
     
     def _payment_in_region(payment):
         if region == "Global":
@@ -1120,7 +1148,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         return False
 
     region_payments = [p for p in payments if _payment_in_region(p)]
-    total_payments = sum(float(p.get('amount') or 0) for p in region_payments)
+    total_payments = sum(_coerce_money(p.get('amount')) for p in region_payments)
     
     total_funds = funds_raised_grants + total_payments
 
@@ -1884,13 +1912,7 @@ def main_dashboard():
         grants = raw_income.get("grants") or []
 
         def _to_float(val):
-            if val is None:
-                return 0.0
-            s = str(val).replace("Â£", "").replace("£", "").replace(",", "").strip()
-            try:
-                return float(s)
-            except ValueError:
-                return 0.0
+            return _coerce_money(val)
 
         rows = []
         for p in payments:
