@@ -1,0 +1,130 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 2 /Kids [ 4 0 R 6 0 R ] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 2043 >>
+stream
+BT
+/F1 11 Tf
+50 760 Td
+14 TL
+(Regional KPI Dashboard) Tj
+() Tj T*
+(- Standard User Guide) Tj T*
+(- Audience: non-technical users) Tj T*
+(- Updated: 2026-02-10) Tj T*
+() Tj T*
+(1. What this system is for) Tj T*
+() Tj T*
+(- The Regional KPI Dashboard shows key performance information for your region.) Tj T*
+(- You can view KPI metrics, charts, and case studies, and apply date and region filters.) Tj T*
+() Tj T*
+(2. Sign in) Tj T*
+() Tj T*
+(- Open the dashboard link provided by your organisation.) Tj T*
+(- Enter your Email Address and Password.) Tj T*
+(- Select Login.) Tj T*
+(- If you forgot your password, enter your email first and click Forgot password?) Tj T*
+(- This sends a reset request to an admin who will issue a temporary password.) Tj T*
+() Tj T*
+(3. First login after a reset) Tj T*
+() Tj T*
+(- If you were given a temporary password, you will be asked to change it.) Tj T*
+(- Enter Temporary Password, New Password, and Confirm New Password.) Tj T*
+(- Click Update Password to continue.) Tj T*
+() Tj T*
+(4. Choosing your screen) Tj T*
+() Tj T*
+(- Use the left sidebar View Mode selector.) Tj T*
+(- Most users will see: KPI Dashboard and Case Studies.) Tj T*
+(- Admins also see: Admin Dashboard.) Tj T*
+() Tj T*
+(5. Using KPI Dashboard) Tj T*
+() Tj T*
+(- The KPI Dashboard opens with your current region and time settings.) Tj T*
+(- Use Region Filter in the sidebar. Admin, Manager, and RPL users can choose All Regions.) Tj T*
+(- Use Time Filters to switch between All Time, Year, Quarter, Month, Week, or Custom Range.) Tj T*
+(- Custom Range must be 3 months or less.) Tj T*
+() Tj T*
+(6. KPI tabs explained) Tj T*
+() Tj T*
+(- Governance: steering group and volunteer activity.) Tj T*
+(- Partnerships: organisation and partner coverage.) Tj T*
+(- Delivery: walks delivered, participation, and demographics.) Tj T*
+(- Income: funds raised, grants/payments, and trend chart.) Tj T*
+(- Comms: outreach and communication metrics.) Tj T*
+(- Case Studies tab: read case studies filtered by your selected dates and region.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 1387 >>
+stream
+BT
+/F1 11 Tf
+50 760 Td
+14 TL
+() Tj
+(7. Using Case Studies screen) Tj T*
+() Tj T*
+(- Open Case Studies from View Mode.) Tj T*
+(- Read existing entries sorted by date.) Tj T*
+(- To add one: open Upload New Case Study, complete Title, Story/Testimonial, Date, and Region,) Tj T*
+(  then click Submit Case Study.) Tj T*
+(- Both Title and Story are required.) Tj T*
+() Tj T*
+(8. Last data refresh) Tj T*
+() Tj T*
+(- A Last Data Refresh card appears in the sidebar after login.) Tj T*
+(- Green means data was refreshed recently.) Tj T*
+(- Amber means refresh is older.) Tj T*
+(- Red means refresh is overdue or unknown.) Tj T*
+() Tj T*
+(9. Logging out) Tj T*
+() Tj T*
+(- Use the Logout button in the sidebar when you finish.) Tj T*
+() Tj T*
+(10. Common issues) Tj T*
+() Tj T*
+(- User not found: check the email spelling and ask an admin to confirm your account.) Tj T*
+(- Invalid password: retry carefully; passwords are case-sensitive.) Tj T*
+(- No data for selected filters: widen date range or switch region.) Tj T*
+(- Cannot reset password: confirm you entered your email before pressing Forgot password?.) Tj T*
+() Tj T*
+(11. Admin-only features \(for awareness\)) Tj T*
+() Tj T*
+(- Only Admin users can access Admin Dashboard functions such as user management,) Tj T*
+(- Beacon sync/upload, and audit logs.) Tj T*
+(- If you need one of these actions, contact an admin.) Tj T*
+() Tj T*
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000123 00000 n 
+0000000193 00000 n 
+0000000319 00000 n 
+0000002414 00000 n 
+0000002540 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+3979
+%%EOF

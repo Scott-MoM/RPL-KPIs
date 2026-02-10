@@ -651,6 +651,7 @@ def sync_beacon_api_to_supabase(admin_client):
         "organisations": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "organization"),
         "events": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "event"),
         "payments": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "payment"),
+        "subscriptions": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "subscription"),
         "grants": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "grant"),
     }
 
@@ -702,10 +703,12 @@ def sync_beacon_api_to_supabase(admin_client):
         }
 
     payment_seen = {}
-    for row in datasets["payments"]:
+    for row in datasets["payments"] + datasets["subscriptions"]:
         entity = _sanitize(_extract_entity(row))
         rec_id = entity.get("id")
         if not rec_id:
+            continue
+        if rec_id in payment_seen:
             continue
         entity["id"] = rec_id
         entity["payment_date"] = _clean_ts(entity.get("payment_date") or entity.get("date") or entity.get("created_at"))

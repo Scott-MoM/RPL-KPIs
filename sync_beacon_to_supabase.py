@@ -115,6 +115,7 @@ def main():
         "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
         "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
         "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
+        "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
         "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
     }
 
@@ -153,11 +154,23 @@ def main():
         client,
     )
 
+    payment_entities = {}
+    for p in datasets["payments"]:
+        e = extract_entity(p)
+        rec_id = e.get("id")
+        if rec_id:
+            payment_entities[rec_id] = e
+    for s in datasets["subscriptions"]:
+        e = extract_entity(s)
+        rec_id = e.get("id")
+        if rec_id and rec_id not in payment_entities:
+            payment_entities[rec_id] = e
+
     count_payments = upsert_rows(
         "beacon_payments",
         [
             {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
-            for x in [extract_entity(p) for p in datasets["payments"]]
+            for x in payment_entities.values()
             if x.get("id")
         ],
         client,
