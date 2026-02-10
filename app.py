@@ -1010,8 +1010,14 @@ def get_all_users():
 
 # --- CASE STUDIES (CRUD) ---
 
-def add_case_study(title, content, region):
-    date_added = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def add_case_study(title, content, region, study_date=None):
+    if study_date is None:
+        dt = datetime.now()
+    elif isinstance(study_date, datetime):
+        dt = study_date
+    else:
+        dt = datetime.combine(study_date, datetime.min.time())
+    date_added = dt.strftime("%Y-%m-%d %H:%M:%S")
     if DB_TYPE == 'supabase':
         DB_CLIENT.table('case_studies').insert({
             "title": title,
@@ -2088,6 +2094,7 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
             with st.form("case_study_form"):
                 cs_title = st.text_input("Title")
                 cs_content = st.text_area("Story / Testimonial")
+                cs_date = st.date_input("Case Study Date", value=datetime.now().date())
                 cs_region = st.selectbox(
                     "Region",
                     ["North of England", "South of England", "Midlands", "Wales", "Global", "Other"]
@@ -2096,7 +2103,7 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
                 
                 if cs_submitted:
                     if cs_title and cs_content:
-                        add_case_study(cs_title, cs_content, cs_region)
+                        add_case_study(cs_title, cs_content, cs_region, cs_date)
                         st.session_state["case_study_saved"] = True
                         st.rerun()
                     else:
