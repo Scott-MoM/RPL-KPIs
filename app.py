@@ -1578,12 +1578,24 @@ def admin_dashboard():
         admin_client = get_admin_client()
         if admin_client:
             if st.button("Sync Beacon API to Database"):
+                sync_progress = st.progress(0, text="Starting Beacon API sync...")
                 try:
+                    sync_progress.progress(30, text="Fetching and importing Beacon data...")
                     result = sync_beacon_api_to_supabase(admin_client)
                     log_audit_event("Data Imported", {"source": "beacon_api", **result})
-                    st.success(f"API sync complete: {result}")
+                    sync_progress.progress(100, text="Beacon API sync complete.")
+                    st.success(
+                        "API sync complete. "
+                        f"Updated: People {result.get('people', 0)}, "
+                        f"Organisations {result.get('organisations', 0)}, "
+                        f"Events {result.get('events', 0)}, "
+                        f"Payments {result.get('payments', 0)}, "
+                        f"Grants {result.get('grants', 0)}. "
+                        f"Synced at: {result.get('synced_at', 'n/a')}"
+                    )
                     st.cache_data.clear()
                 except Exception as e:
+                    sync_progress.empty()
                     st.error(f"API sync failed: {e}")
         else:
             st.info("Admin client not available. Check Supabase secrets.")
