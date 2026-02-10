@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import requests
 import plotly.express as px
 from passlib.hash import pbkdf2_sha256
 from datetime import datetime
@@ -509,6 +510,216 @@ def import_beacon_uploads(admin_client, uploads):
         "events": len(event_rows),
         "payments": len(payment_rows),
         "grants": len(grant_rows),
+    }
+
+def _get_secret_or_env(key, default=None):
+    try:
+        if key in st.secrets:
+            return st.secrets.get(key) or default
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+def _build_beacon_url(base_url, account_id, endpoint):
+    base = (base_url or "").strip()
+    if not base:
+        base = "https://api.beaconcrm.org/v1/account/{account_id}"
+    if "{account_id}" in base:
+        if not account_id:
+            raise ValueError("Missing BEACON_ACCOUNT_ID for base URL template.")
+        base = base.format(account_id=account_id)
+    base = base.rstrip("/")
+    if endpoint.startswith("/"):
+        return f"{base}{endpoint}"
+    if base.endswith("/entities"):
+        return f"{base}/{endpoint}"
+    return f"{base}/entities/{endpoint}"
+
+def _extract_result_list(response_json):
+    if isinstance(response_json, list):
+        return response_json
+    if not isinstance(response_json, dict):
+        return []
+    if isinstance(response_json.get("results"), list):
+        return response_json.get("results") or []
+    if isinstance(response_json.get("data"), list):
+        return response_json.get("data") or []
+    return []
+
+def _extract_entity(record):
+    if isinstance(record, dict) and isinstance(record.get("entity"), dict):
+        return record.get("entity") or {}
+    return record if isinstance(record, dict) else {}
+
+def _extract_region_tags(record):
+    candidates = []
+    for key in (
+        "c_region",
+        "region",
+        "Region",
+        "location_region",
+        "location",
+        "Location (region)",
+        "Location Region",
+    ):
+        if key in record and record.get(key) not in [None, ""]:
+            candidates.extend(_to_list(record.get(key)))
+    if isinstance(record.get("address"), list):
+        for addr in record.get("address"):
+            if isinstance(addr, dict):
+                if addr.get("region"):
+                    candidates.extend(_to_list(addr.get("region")))
+                if addr.get("country"):
+                    candidates.extend(_to_list(addr.get("country")))
+    seen = set()
+    out = []
+    for item in candidates:
+        s = str(item).strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    return out
+
+def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100, max_pages=200):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Beacon-Application": "developer_api",
+    }
+    all_rows = []
+    page = 1
+    while page <= max_pages:
+        url = _build_beacon_url(base_url, account_id, endpoint)
+        resp = requests.get(url, headers=headers, params={"page": page, "per_page": per_page}, timeout=45)
+        if resp.status_code >= 400:
+            try:
+                details = resp.json()
+            except Exception:
+                details = resp.text[:500]
+            raise RuntimeError(f"Beacon API error {resp.status_code} for {endpoint}: {details}")
+        payload = resp.json()
+        rows = _extract_result_list(payload)
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < per_page:
+            break
+        total = payload.get("total") if isinstance(payload, dict) else None
+        if isinstance(total, int) and len(all_rows) >= total:
+            break
+        page += 1
+    return all_rows
+
+def sync_beacon_api_to_supabase(admin_client):
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    beacon_key = _get_secret_or_env("BEACON_API_KEY")
+    beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
+    beacon_account_id = _get_secret_or_env("BEACON_ACCOUNT_ID")
+    if not beacon_key:
+        raise RuntimeError("Missing BEACON_API_KEY in Streamlit secrets or environment.")
+
+    datasets = {
+        "people": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "person"),
+        "organisations": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "organization"),
+        "events": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "event"),
+        "payments": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "payment"),
+        "grants": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "grant"),
+    }
+
+    people_seen = {}
+    for row in datasets["people"]:
+        entity = _sanitize(_extract_entity(row))
+        rec_id = entity.get("id")
+        if not rec_id:
+            continue
+        entity["id"] = rec_id
+        entity["created_at"] = _clean_ts(entity.get("created_at"))
+        entity["type"] = _to_list(entity.get("type"))
+        if not entity.get("c_region"):
+            entity["c_region"] = _extract_region_tags(entity)
+        people_seen[rec_id] = {"id": rec_id, "payload": entity, "created_at": entity.get("created_at"), "updated_at": now_iso}
+
+    org_seen = {}
+    for row in datasets["organisations"]:
+        entity = _sanitize(_extract_entity(row))
+        rec_id = entity.get("id")
+        if not rec_id:
+            continue
+        entity["id"] = rec_id
+        entity["created_at"] = _clean_ts(entity.get("created_at"))
+        if isinstance(entity.get("type"), list):
+            entity["type"] = ", ".join([str(v) for v in entity.get("type") if str(v).strip()])
+        if not entity.get("c_region"):
+            entity["c_region"] = _extract_region_tags(entity)
+        org_seen[rec_id] = {"id": rec_id, "payload": entity, "created_at": entity.get("created_at"), "updated_at": now_iso}
+
+    event_seen = {}
+    for row in datasets["events"]:
+        entity = _sanitize(_extract_entity(row))
+        rec_id = entity.get("id")
+        if not rec_id:
+            continue
+        entity["id"] = rec_id
+        entity["start_date"] = _clean_ts(entity.get("start_date") or entity.get("date") or entity.get("created_at"))
+        if not entity.get("c_region"):
+            entity["c_region"] = _extract_region_tags(entity)
+        entity["type"] = entity.get("type") or entity.get("event_type") or entity.get("category")
+        entity["number_of_attendees"] = entity.get("number_of_attendees") or entity.get("attendees") or entity.get("participant_count")
+        event_seen[rec_id] = {
+            "id": rec_id,
+            "payload": entity,
+            "start_date": entity.get("start_date"),
+            "region": (entity.get("c_region") or [None])[0],
+            "updated_at": now_iso,
+        }
+
+    payment_seen = {}
+    for row in datasets["payments"]:
+        entity = _sanitize(_extract_entity(row))
+        rec_id = entity.get("id")
+        if not rec_id:
+            continue
+        entity["id"] = rec_id
+        entity["payment_date"] = _clean_ts(entity.get("payment_date") or entity.get("date") or entity.get("created_at"))
+        entity["amount"] = entity.get("amount") or entity.get("value")
+        payment_seen[rec_id] = {"id": rec_id, "payload": entity, "payment_date": entity.get("payment_date"), "updated_at": now_iso}
+
+    grant_seen = {}
+    for row in datasets["grants"]:
+        entity = _sanitize(_extract_entity(row))
+        rec_id = entity.get("id")
+        if not rec_id:
+            continue
+        entity["id"] = rec_id
+        entity["close_date"] = _clean_ts(entity.get("close_date") or entity.get("award_date") or entity.get("created_at"))
+        entity["amount"] = entity.get("amount") or entity.get("amount_granted") or entity.get("value")
+        entity["stage"] = entity.get("stage") or entity.get("status")
+        grant_seen[rec_id] = {"id": rec_id, "payload": entity, "close_date": entity.get("close_date"), "updated_at": now_iso}
+
+    people_rows = list(people_seen.values())
+    org_rows = list(org_seen.values())
+    event_rows = list(event_seen.values())
+    payment_rows = list(payment_seen.values())
+    grant_rows = list(grant_seen.values())
+
+    if people_rows:
+        admin_client.table("beacon_people").upsert(people_rows, on_conflict="id").execute()
+    if org_rows:
+        admin_client.table("beacon_organisations").upsert(org_rows, on_conflict="id").execute()
+    if event_rows:
+        admin_client.table("beacon_events").upsert(event_rows, on_conflict="id").execute()
+    if payment_rows:
+        admin_client.table("beacon_payments").upsert(payment_rows, on_conflict="id").execute()
+    if grant_rows:
+        admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
+
+    return {
+        "people": len(people_rows),
+        "organisations": len(org_rows),
+        "events": len(event_rows),
+        "payments": len(payment_rows),
+        "grants": len(grant_rows),
+        "synced_at": now_iso,
     }
 
 # --- LOCAL FILE HELPERS (Fallback) ---
@@ -1362,6 +1573,23 @@ def admin_dashboard():
     # --- SYSTEM ACTIONS ---
     st.markdown("---")
     st.subheader("System Actions")
+    st.subheader("Beacon API Sync")
+    if DB_TYPE == 'supabase':
+        admin_client = get_admin_client()
+        if admin_client:
+            if st.button("Sync Beacon API to Database"):
+                try:
+                    result = sync_beacon_api_to_supabase(admin_client)
+                    log_audit_event("Data Imported", {"source": "beacon_api", **result})
+                    st.success(f"API sync complete: {result}")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"API sync failed: {e}")
+        else:
+            st.info("Admin client not available. Check Supabase secrets.")
+    else:
+        st.info("API sync is available only in Supabase mode.")
+
     st.subheader("Beacon CSV Upload")
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
