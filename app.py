@@ -155,7 +155,7 @@ def inject_global_styles():
             background: linear-gradient(90deg, #ff3d7f, #ff9f1c, #7bff6b, #00f5d4, #5a4dff);
             border-radius: 999px;
             padding: 6px 10px;
-            color: #0c0c12 !important;
+            color: #ffffff !important;
             border: 1px solid rgba(255,255,255,0.18);
             margin-bottom: 6px;
         }
@@ -166,6 +166,14 @@ def inject_global_styles():
 
         section[data-testid="stSidebar"] [role="radiogroup"] label[data-selected="true"] {
             box-shadow: 0 8px 22px rgba(122, 60, 255, 0.4);
+        }
+
+        /* Ensure radio/checkbox option text is always white */
+        [role="radiogroup"] label,
+        [role="radiogroup"] label span,
+        [data-testid="stCheckbox"] label,
+        [data-testid="stCheckbox"] label span {
+            color: #ffffff !important;
         }
 
         h1, h2, h3, h4 {
