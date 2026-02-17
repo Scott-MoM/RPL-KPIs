@@ -140,6 +140,18 @@ def upsert_rows(table, rows, client):
     client.table(table).upsert(rows).execute()
     return len(rows)
 
+def log_system_audit(client, action, details=None, region="Global"):
+    try:
+        client.table("audit_logs").insert({
+            "user_email": "System",
+            "action": action,
+            "details": details or {},
+            "region": region,
+        }).execute()
+    except Exception as e:
+        # Keep sync resilient even if audit logging fails.
+        print(f"Audit Log Error: {e}")
+
 
 def main():
     secrets = load_secrets()
@@ -158,91 +170,104 @@ def main():
 
     client = create_client(supabase_url, supabase_key)
 
-    datasets = {
-        "people": fetch_all("person", beacon_key, account_id, base_url=beacon_base_url),
-        "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
-        "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
-        "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
-        "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
-        "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
+    sync_context = {
+        "source": "beacon_api",
+        "trigger": "github_actions",
+        "workflow": os.getenv("GITHUB_WORKFLOW", "manual_or_unknown"),
+        "run_id": os.getenv("GITHUB_RUN_ID"),
     }
+    log_system_audit(client, "Data Sync Started", sync_context)
 
-    count_people = upsert_rows(
-        "beacon_people",
-        [
-            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-            for e in [extract_entity(p) for p in datasets["people"]]
-            if e.get("id")
-        ],
-        client,
-    )
+    try:
+        datasets = {
+            "people": fetch_all("person", beacon_key, account_id, base_url=beacon_base_url),
+            "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
+            "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
+            "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
+            "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
+            "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
+        }
 
-    count_orgs = upsert_rows(
-        "beacon_organisations",
-        [
-            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-            for e in [extract_entity(o) for o in datasets["organisations"]]
-            if e.get("id")
-        ],
-        client,
-    )
+        count_people = upsert_rows(
+            "beacon_people",
+            [
+                {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+                for e in [extract_entity(p) for p in datasets["people"]]
+                if e.get("id")
+            ],
+            client,
+        )
 
-    count_events = upsert_rows(
-        "beacon_events",
-        [
-            {
-                "id": x.get("id"),
-                "payload": x,
-                "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
-                "region": (x.get("c_region") or [x.get("region")] or [None])[0],
-            }
-            for x in [extract_entity(e) for e in datasets["events"]]
-            if x.get("id")
-        ],
-        client,
-    )
+        count_orgs = upsert_rows(
+            "beacon_organisations",
+            [
+                {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+                for e in [extract_entity(o) for o in datasets["organisations"]]
+                if e.get("id")
+            ],
+            client,
+        )
 
-    payment_entities = {}
-    for p in datasets["payments"]:
-        e = extract_entity(p)
-        rec_id = e.get("id")
-        if rec_id:
-            payment_entities[rec_id] = e
-    for s in datasets["subscriptions"]:
-        e = extract_entity(s)
-        rec_id = e.get("id")
-        if rec_id and rec_id not in payment_entities:
-            payment_entities[rec_id] = e
+        count_events = upsert_rows(
+            "beacon_events",
+            [
+                {
+                    "id": x.get("id"),
+                    "payload": x,
+                    "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
+                    "region": (x.get("c_region") or [x.get("region")] or [None])[0],
+                }
+                for x in [extract_entity(e) for e in datasets["events"]]
+                if x.get("id")
+            ],
+            client,
+        )
 
-    count_payments = upsert_rows(
-        "beacon_payments",
-        [
-            {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
-            for x in payment_entities.values()
-            if x.get("id")
-        ],
-        client,
-    )
+        payment_entities = {}
+        for p in datasets["payments"]:
+            e = extract_entity(p)
+            rec_id = e.get("id")
+            if rec_id:
+                payment_entities[rec_id] = e
+        for s in datasets["subscriptions"]:
+            e = extract_entity(s)
+            rec_id = e.get("id")
+            if rec_id and rec_id not in payment_entities:
+                payment_entities[rec_id] = e
 
-    count_grants = upsert_rows(
-        "beacon_grants",
-        [
-            {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
-            for x in [extract_entity(g) for g in datasets["grants"]]
-            if x.get("id")
-        ],
-        client,
-    )
+        count_payments = upsert_rows(
+            "beacon_payments",
+            [
+                {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
+                for x in payment_entities.values()
+                if x.get("id")
+            ],
+            client,
+        )
 
-    summary = {
-        "people": count_people,
-        "organisations": count_orgs,
-        "events": count_events,
-        "payments": count_payments,
-        "grants": count_grants,
-        "synced_at": datetime.utcnow().isoformat() + "Z",
-    }
-    print(json.dumps(summary, indent=2))
+        count_grants = upsert_rows(
+            "beacon_grants",
+            [
+                {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
+                for x in [extract_entity(g) for g in datasets["grants"]]
+                if x.get("id")
+            ],
+            client,
+        )
+
+        summary = {
+            "people": count_people,
+            "organisations": count_orgs,
+            "events": count_events,
+            "payments": count_payments,
+            "grants": count_grants,
+            "synced_at": datetime.utcnow().isoformat() + "Z",
+        }
+        log_system_audit(client, "Data Sync Completed", {**sync_context, **summary})
+        print(json.dumps(summary, indent=2))
+    except Exception as e:
+        log_system_audit(client, "Data Sync Failed", {**sync_context, "error": str(e)})
+        raise
 
 
 if __name__ == "__main__":
