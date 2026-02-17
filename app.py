@@ -639,9 +639,12 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100
     return all_rows
 
 def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
+    def _status_text(progress, message):
+        return f"{int(progress)}% | {message}"
+
     def _report(progress, message):
         if progress_callback:
-            progress_callback(progress, message)
+            progress_callback(progress, _status_text(progress, message))
 
     now_iso = datetime.utcnow().isoformat() + "Z"
     beacon_key = _get_secret_or_env("BEACON_API_KEY")
@@ -663,7 +666,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     for idx, (dataset_key, endpoint, label) in enumerate(fetch_plan):
         fetch_start = 5 + int((idx / len(fetch_plan)) * 45)
         fetch_end = 5 + int(((idx + 1) / len(fetch_plan)) * 45)
-        _report(fetch_start, f"Fetching Beacon {label}...")
+        _report(fetch_start, f"Fetching Beacon {label} ({idx + 1} of {len(fetch_plan)} datasets)...")
         datasets[dataset_key] = _fetch_beacon_entities(
             beacon_base_url, beacon_key, beacon_account_id, endpoint
         )
@@ -749,23 +752,37 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     payment_rows = list(payment_seen.values())
     grant_rows = list(grant_seen.values())
 
+    total_records = len(people_rows) + len(org_rows) + len(event_rows) + len(payment_rows) + len(grant_rows)
+    synced_records = 0
+
+    _report(68, f"Preparing import: {synced_records} out of {total_records} records synced.")
     _report(72, f"Upserting people ({len(people_rows)}) and organisations ({len(org_rows)})...")
     if people_rows:
         admin_client.table("beacon_people").upsert(people_rows, on_conflict="id").execute()
+        synced_records += len(people_rows)
+        _report(76, f"People upserted: {synced_records} out of {total_records} records synced.")
     if org_rows:
         admin_client.table("beacon_organisations").upsert(org_rows, on_conflict="id").execute()
+        synced_records += len(org_rows)
+        _report(80, f"Organisations upserted: {synced_records} out of {total_records} records synced.")
 
     _report(84, f"Upserting events ({len(event_rows)}) and payments ({len(payment_rows)})...")
     if event_rows:
         admin_client.table("beacon_events").upsert(event_rows, on_conflict="id").execute()
+        synced_records += len(event_rows)
+        _report(88, f"Events upserted: {synced_records} out of {total_records} records synced.")
     if payment_rows:
         admin_client.table("beacon_payments").upsert(payment_rows, on_conflict="id").execute()
+        synced_records += len(payment_rows)
+        _report(92, f"Payments upserted: {synced_records} out of {total_records} records synced.")
 
     _report(94, f"Upserting grants ({len(grant_rows)})...")
     if grant_rows:
         admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
+        synced_records += len(grant_rows)
+        _report(97, f"Grants upserted: {synced_records} out of {total_records} records synced.")
 
-    _report(100, "Beacon API sync complete.")
+    _report(100, f"Beacon API sync complete. {synced_records} out of {total_records} records synced.")
 
     return {
         "people": len(people_rows),
