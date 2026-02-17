@@ -2375,6 +2375,11 @@ def main():
             st.session_state['logged_in'] = False
             st.rerun()
         
+        st.sidebar.markdown(
+            "[![Nightly Beacon Sync](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml/badge.svg)]"
+            "(https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml)"
+        )
+
         # Last Data Refresh card
         last_refresh = get_last_refresh_timestamp()
         if last_refresh:
