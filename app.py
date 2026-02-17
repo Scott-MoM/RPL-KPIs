@@ -1733,46 +1733,46 @@ def admin_dashboard():
         st.caption(f"Supabase key role: {st.session_state.get('supabase_role')}")
 
     # --- PASSWORD RESET REQUESTS ---
-    st.subheader("Password Reset Requests")
-    if DB_TYPE == 'supabase':
-        try:
-            admin_client = get_admin_client()
-            if not admin_client:
-                st.error("Admin client not available. Check Supabase secrets.")
-                reqs = []
-            else:
-                reqs = admin_client.table("password_reset_requests") \
-                .select("id, email, status, created_at") \
-                .eq("status", "pending") \
-                .order("created_at", desc=True) \
-                .execute().data or []
-        except Exception as e:
-            reqs = []
-            st.error(f"Could not load requests: {e}")
-        if reqs:
-            req_emails = [r["email"] for r in reqs]
-            selected_email = st.selectbox("Pending requests", req_emails)
-            temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
-            if st.button("Set Temporary Password"):
-                if not temp_pw:
-                    st.error("Please enter a temporary password.")
+    with st.expander("Password Reset Requests", expanded=False):
+        if DB_TYPE == 'supabase':
+            try:
+                admin_client = get_admin_client()
+                if not admin_client:
+                    st.error("Admin client not available. Check Supabase secrets.")
+                    reqs = []
                 else:
-                    try:
-                        user_row = admin_client.table("user_roles").select("user_id").eq("email", selected_email).execute()
-                        if not user_row.data:
-                            st.error("User not found for that email.")
-                        else:
-                            user_id = user_row.data[0]["user_id"]
-                            admin_client.auth.admin.update_user_by_id(user_id, {"password": temp_pw})
-                            admin_client.table("user_roles").update({"must_change_password": True}).eq("user_id", user_id).execute()
-                            admin_client.table("password_reset_requests").update({"status": "completed"}).eq("email", selected_email).execute()
-                            st.success("Temporary password set. User will be prompted to change it on next login.")
-                    except Exception as e:
-                        st.error(f"Failed to reset password: {e}")
+                    reqs = admin_client.table("password_reset_requests") \
+                    .select("id, email, status, created_at") \
+                    .eq("status", "pending") \
+                    .order("created_at", desc=True) \
+                    .execute().data or []
+            except Exception as e:
+                reqs = []
+                st.error(f"Could not load requests: {e}")
+            if reqs:
+                req_emails = [r["email"] for r in reqs]
+                selected_email = st.selectbox("Pending requests", req_emails)
+                temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
+                if st.button("Set Temporary Password"):
+                    if not temp_pw:
+                        st.error("Please enter a temporary password.")
+                    else:
+                        try:
+                            user_row = admin_client.table("user_roles").select("user_id").eq("email", selected_email).execute()
+                            if not user_row.data:
+                                st.error("User not found for that email.")
+                            else:
+                                user_id = user_row.data[0]["user_id"]
+                                admin_client.auth.admin.update_user_by_id(user_id, {"password": temp_pw})
+                                admin_client.table("user_roles").update({"must_change_password": True}).eq("user_id", user_id).execute()
+                                admin_client.table("password_reset_requests").update({"status": "completed"}).eq("email", selected_email).execute()
+                                st.success("Temporary password set. User will be prompted to change it on next login.")
+                        except Exception as e:
+                            st.error(f"Failed to reset password: {e}")
+            else:
+                st.info("No pending requests.")
         else:
-            st.info("No pending requests.")
-    else:
-        st.info("Password reset requests are available only in Supabase mode.")
+            st.info("Password reset requests are available only in Supabase mode.")
 
     # --- USER MANAGEMENT ---
     with st.expander("Create New User", expanded=False):
@@ -1798,104 +1798,104 @@ def admin_dashboard():
     users_data = get_all_users()
     if users_data:
         df_users = pd.DataFrame(users_data)
-        st.subheader("Existing Users")
-        st.dataframe(df_users, use_container_width=True)
-        
-        if not df_users.empty:
-            user_emails = df_users['email'].tolist()
+        with st.expander("Existing Users & Actions", expanded=False):
+            st.dataframe(df_users, use_container_width=True)
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.subheader("Reset Password")
-                target_email = st.selectbox("Select User", user_emails, key="reset_sel")
-                reset_pw = st.text_input("New Password", type="password", key="reset_pw")
-                if st.button("Reset Password"):
-                    reset_password(target_email, reset_pw)
-                    st.success(f"Password updated.")
-            
-            with col2:
-                st.subheader("Update Role")
-                target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
-                new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin"], key="role_up")
-                role_reason = st.text_input("Reason for role change", key="role_reason")
-                role_confirm = st.checkbox("I confirm this role change", key="role_confirm")
-                if st.button("Update Role"):
-                    if not role_reason.strip():
-                        st.error("Please provide a reason for the role update.")
-                    elif not role_confirm:
-                        st.error("Please confirm the role update.")
-                    else:
-                        update_user_role(
-                            target_role_email,
-                            new_role_update,
-                            audit_reason=role_reason.strip(),
-                            audit_confirmed=True,
-                        )
-                        st.success("Role updated.")
-                        st.rerun()
+            if not df_users.empty:
+                user_emails = df_users['email'].tolist()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.subheader("Reset Password")
+                    target_email = st.selectbox("Select User", user_emails, key="reset_sel")
+                    reset_pw = st.text_input("New Password", type="password", key="reset_pw")
+                    if st.button("Reset Password"):
+                        reset_password(target_email, reset_pw)
+                        st.success(f"Password updated.")
+                
+                with col2:
+                    st.subheader("Update Role")
+                    target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
+                    new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin"], key="role_up")
+                    role_reason = st.text_input("Reason for role change", key="role_reason")
+                    role_confirm = st.checkbox("I confirm this role change", key="role_confirm")
+                    if st.button("Update Role"):
+                        if not role_reason.strip():
+                            st.error("Please provide a reason for the role update.")
+                        elif not role_confirm:
+                            st.error("Please confirm the role update.")
+                        else:
+                            update_user_role(
+                                target_role_email,
+                                new_role_update,
+                                audit_reason=role_reason.strip(),
+                                audit_confirmed=True,
+                            )
+                            st.success("Role updated.")
+                            st.rerun()
 
-            with col3:
-                st.subheader("Delete User")
-                target_del = st.selectbox("Select User", user_emails, key="del_sel")
-                delete_reason = st.text_input("Reason for deletion", key="delete_reason")
-                delete_confirm = st.checkbox("I confirm this user deletion", key="delete_confirm")
-                if st.button("Delete User", type="primary"):
-                    if not delete_reason.strip():
-                        st.error("Please provide a reason for deletion.")
-                    elif not delete_confirm:
-                        st.error("Please confirm user deletion.")
-                    else:
-                        delete_user(
-                            target_del,
-                            audit_reason=delete_reason.strip(),
-                            audit_confirmed=True,
-                        )
-                        st.success("User deleted.")
-                        st.rerun()
+                with col3:
+                    st.subheader("Delete User")
+                    target_del = st.selectbox("Select User", user_emails, key="del_sel")
+                    delete_reason = st.text_input("Reason for deletion", key="delete_reason")
+                    delete_confirm = st.checkbox("I confirm this user deletion", key="delete_confirm")
+                    if st.button("Delete User", type="primary"):
+                        if not delete_reason.strip():
+                            st.error("Please provide a reason for deletion.")
+                        elif not delete_confirm:
+                            st.error("Please confirm user deletion.")
+                        else:
+                            delete_user(
+                                target_del,
+                                audit_reason=delete_reason.strip(),
+                                audit_confirmed=True,
+                            )
+                            st.success("User deleted.")
+                            st.rerun()
 
     # --- SYSTEM ACTIONS ---
     st.markdown("---")
     st.subheader("System Actions")
-    st.subheader("Sync Performance")
-    if DB_TYPE == 'supabase':
-        try:
-            perf_resp = (
-                DB_CLIENT.table("audit_logs")
-                .select("created_at, action, details")
-                .in_("action", ["Data Sync Completed", "Data Sync Failed"])
-                .order("created_at", desc=True)
-                .limit(100)
-                .execute()
-            )
-            perf_rows = perf_resp.data or []
-        except Exception:
-            perf_rows = []
+    with st.expander("Sync Performance", expanded=False):
+        if DB_TYPE == 'supabase':
+            try:
+                perf_resp = (
+                    DB_CLIENT.table("audit_logs")
+                    .select("created_at, action, details")
+                    .in_("action", ["Data Sync Completed", "Data Sync Failed"])
+                    .order("created_at", desc=True)
+                    .limit(100)
+                    .execute()
+                )
+                perf_rows = perf_resp.data or []
+            except Exception:
+                perf_rows = []
 
-        completed = []
-        for row in perf_rows:
-            if row.get("action") != "Data Sync Completed":
-                continue
-            details = row.get("details") or {}
-            if details.get("source") != "beacon_api":
-                continue
-            completed.append(details)
+            completed = []
+            for row in perf_rows:
+                if row.get("action") != "Data Sync Completed":
+                    continue
+                details = row.get("details") or {}
+                if details.get("source") != "beacon_api":
+                    continue
+                completed.append(details)
 
-        if completed:
-            latest = completed[0]
-            c_perf1, c_perf2, c_perf3, c_perf4 = st.columns(4)
-            c_perf1.metric("Last Total", f"{latest.get('total_duration_ms', 0) / 1000:.1f}s")
-            c_perf2.metric("Fetch", f"{latest.get('fetch_duration_ms', 0) / 1000:.1f}s")
-            c_perf3.metric("Transform", f"{latest.get('transform_duration_ms', 0) / 1000:.1f}s")
-            c_perf4.metric("Upsert", f"{latest.get('upsert_duration_ms', 0) / 1000:.1f}s")
+            if completed:
+                latest = completed[0]
+                c_perf1, c_perf2, c_perf3, c_perf4 = st.columns(4)
+                c_perf1.metric("Last Total", f"{latest.get('total_duration_ms', 0) / 1000:.1f}s")
+                c_perf2.metric("Fetch", f"{latest.get('fetch_duration_ms', 0) / 1000:.1f}s")
+                c_perf3.metric("Transform", f"{latest.get('transform_duration_ms', 0) / 1000:.1f}s")
+                c_perf4.metric("Upsert", f"{latest.get('upsert_duration_ms', 0) / 1000:.1f}s")
 
-            recent = completed[:10]
-            if recent:
-                avg_total = sum(int(x.get("total_duration_ms") or 0) for x in recent) / len(recent)
-                st.caption(f"Average total duration (last {len(recent)} successful syncs): {avg_total / 1000:.1f}s")
+                recent = completed[:10]
+                if recent:
+                    avg_total = sum(int(x.get("total_duration_ms") or 0) for x in recent) / len(recent)
+                    st.caption(f"Average total duration (last {len(recent)} successful syncs): {avg_total / 1000:.1f}s")
+            else:
+                st.info("No completed Beacon sync performance records found yet.")
         else:
-            st.info("No completed Beacon sync performance records found yet.")
-    else:
-        st.info("Sync performance is available only in Supabase mode.")
+            st.info("Sync performance is available only in Supabase mode.")
 
     st.subheader("Beacon API Sync")
     if DB_TYPE == 'supabase':
@@ -2014,55 +2014,54 @@ def admin_dashboard():
 
     # --- AUDIT LOG UI ---
     st.markdown("---")
-    st.subheader("System Audit Log")
+    with st.expander("System Audit Log", expanded=False):
+        if DB_TYPE == 'supabase':
+            # 1. Build Query
+            query = DB_CLIENT.table("audit_logs").select("*").order("created_at", desc=True).limit(200)
 
-    if DB_TYPE == 'supabase':
-        # 1. Build Query
-        query = DB_CLIENT.table("audit_logs").select("*").order("created_at", desc=True).limit(200)
-
-        # 2. Fetch & Display
-        try:
-            resp = query.execute()
-            data = resp.data
-            
-            if data:
-                df_log = pd.DataFrame(data)
-
-                # Search & Filter Controls
-                col_search, col_filter = st.columns([3, 1])
-                search_term = col_search.text_input(
-                    "Search Logs (User, Action, or Details)",
-                    placeholder="e.g. 'Data Sync Completed' or 'scott@...'"
-                )
-                action_options = ["All"] + sorted(df_log["action"].dropna().astype(str).unique().tolist())
-                action_filter = col_filter.selectbox("Filter by Action", action_options)
-                if action_filter != "All":
-                    df_log = df_log[df_log["action"] == action_filter]
+            # 2. Fetch & Display
+            try:
+                resp = query.execute()
+                data = resp.data
                 
-                # Convert timestamps to readable format
-                df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Client-side Search (for flexibility with JSON/Text columns)
-                if search_term:
-                    search_term = search_term.lower()
-                    mask = (
-                        df_log['user_email'].str.lower().str.contains(search_term) |
-                        df_log['action'].str.lower().str.contains(search_term) |
-                        df_log['details'].astype(str).str.lower().str.contains(search_term)
+                if data:
+                    df_log = pd.DataFrame(data)
+
+                    # Search & Filter Controls
+                    col_search, col_filter = st.columns([3, 1])
+                    search_term = col_search.text_input(
+                        "Search Logs (User, Action, or Details)",
+                        placeholder="e.g. 'Data Sync Completed' or 'scott@...'"
                     )
-                    df_log = df_log[mask]
+                    action_options = ["All"] + sorted(df_log["action"].dropna().astype(str).unique().tolist())
+                    action_filter = col_filter.selectbox("Filter by Action", action_options)
+                    if action_filter != "All":
+                        df_log = df_log[df_log["action"] == action_filter]
+                    
+                    # Convert timestamps to readable format
+                    df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Client-side Search (for flexibility with JSON/Text columns)
+                    if search_term:
+                        search_term = search_term.lower()
+                        mask = (
+                            df_log['user_email'].str.lower().str.contains(search_term) |
+                            df_log['action'].str.lower().str.contains(search_term) |
+                            df_log['details'].astype(str).str.lower().str.contains(search_term)
+                        )
+                        df_log = df_log[mask]
 
-                st.dataframe(
-                    df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info("No logs found.")
-        except Exception as e:
-            st.error(f"Failed to load logs: {e}")
-    else:
-        st.info("Audit logging is only enabled in Supabase mode.")
+                    st.dataframe(
+                        df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("No logs found.")
+            except Exception as e:
+                st.error(f"Failed to load logs: {e}")
+        else:
+            st.info("Audit logging is only enabled in Supabase mode.")
 
 def get_time_filters():
     st.sidebar.markdown("### Time Filters")
