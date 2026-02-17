@@ -638,7 +638,11 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100
         page += 1
     return all_rows
 
-def sync_beacon_api_to_supabase(admin_client):
+def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
+    def _report(progress, message):
+        if progress_callback:
+            progress_callback(progress, message)
+
     now_iso = datetime.utcnow().isoformat() + "Z"
     beacon_key = _get_secret_or_env("BEACON_API_KEY")
     beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
@@ -646,14 +650,26 @@ def sync_beacon_api_to_supabase(admin_client):
     if not beacon_key:
         raise RuntimeError("Missing BEACON_API_KEY in Streamlit secrets or environment.")
 
-    datasets = {
-        "people": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "person"),
-        "organisations": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "organization"),
-        "events": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "event"),
-        "payments": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "payment"),
-        "subscriptions": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "subscription"),
-        "grants": _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, "grant"),
-    }
+    fetch_plan = [
+        ("people", "person", "people"),
+        ("organisations", "organization", "organisations"),
+        ("events", "event", "events"),
+        ("payments", "payment", "payments"),
+        ("subscriptions", "subscription", "subscriptions"),
+        ("grants", "grant", "grants"),
+    ]
+    datasets = {}
+    _report(5, "Starting Beacon API sync...")
+    for idx, (dataset_key, endpoint, label) in enumerate(fetch_plan):
+        fetch_start = 5 + int((idx / len(fetch_plan)) * 45)
+        fetch_end = 5 + int(((idx + 1) / len(fetch_plan)) * 45)
+        _report(fetch_start, f"Fetching Beacon {label}...")
+        datasets[dataset_key] = _fetch_beacon_entities(
+            beacon_base_url, beacon_key, beacon_account_id, endpoint
+        )
+        _report(fetch_end, f"Fetched Beacon {label}: {len(datasets[dataset_key])} records.")
+
+    _report(55, "Transforming Beacon records...")
 
     people_seen = {}
     for row in datasets["people"]:
@@ -733,16 +749,23 @@ def sync_beacon_api_to_supabase(admin_client):
     payment_rows = list(payment_seen.values())
     grant_rows = list(grant_seen.values())
 
+    _report(72, f"Upserting people ({len(people_rows)}) and organisations ({len(org_rows)})...")
     if people_rows:
         admin_client.table("beacon_people").upsert(people_rows, on_conflict="id").execute()
     if org_rows:
         admin_client.table("beacon_organisations").upsert(org_rows, on_conflict="id").execute()
+
+    _report(84, f"Upserting events ({len(event_rows)}) and payments ({len(payment_rows)})...")
     if event_rows:
         admin_client.table("beacon_events").upsert(event_rows, on_conflict="id").execute()
     if payment_rows:
         admin_client.table("beacon_payments").upsert(payment_rows, on_conflict="id").execute()
+
+    _report(94, f"Upserting grants ({len(grant_rows)})...")
     if grant_rows:
         admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
+
+    _report(100, "Beacon API sync complete.")
 
     return {
         "people": len(people_rows),
@@ -1617,8 +1640,10 @@ def admin_dashboard():
             if st.button("Sync Beacon API to Database"):
                 sync_progress = st.progress(0, text="Starting Beacon API sync...")
                 try:
-                    sync_progress.progress(30, text="Fetching and importing Beacon data...")
-                    result = sync_beacon_api_to_supabase(admin_client)
+                    def _sync_ui_progress(progress, message):
+                        sync_progress.progress(int(max(0, min(100, progress))), text=message)
+
+                    result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_ui_progress)
                     log_audit_event("Data Imported", {"source": "beacon_api", **result})
                     sync_progress.progress(100, text="Beacon API sync complete.")
                     st.success(
@@ -1632,7 +1657,7 @@ def admin_dashboard():
                     )
                     st.cache_data.clear()
                 except Exception as e:
-                    sync_progress.empty()
+                    sync_progress.progress(100, text="Beacon API sync failed.")
                     st.error(f"API sync failed: {e}")
         else:
             st.info("Admin client not available. Check Supabase secrets.")
