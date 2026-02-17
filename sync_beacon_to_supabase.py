@@ -137,8 +137,30 @@ def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pag
 def upsert_rows(table, rows, client):
     if not rows:
         return 0
-    client.table(table).upsert(rows).execute()
-    return len(rows)
+    total = len(rows)
+    index = 0
+    default_chunk_size = 200
+
+    while index < total:
+        chunk_size = min(default_chunk_size, total - index)
+        while True:
+            chunk = rows[index:index + chunk_size]
+            try:
+                client.table(table).upsert(chunk, on_conflict="id").execute()
+                index += len(chunk)
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                is_timeout = "statement timeout" in msg or "57014" in msg
+                if is_timeout and chunk_size > 25:
+                    # Reduce batch size and retry the same offset.
+                    chunk_size = max(25, chunk_size // 2)
+                    time.sleep(1)
+                    continue
+                if is_timeout:
+                    time.sleep(2)
+                raise
+    return total
 
 def log_system_audit(client, action, details=None, region="Global"):
     try:
