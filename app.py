@@ -730,32 +730,51 @@ def run_beacon_api_smoke_test():
         details = payload if isinstance(payload, dict) and payload else (resp.text[:500] or "No details")
         raise RuntimeError(f"Beacon smoke test failed ({resp.status_code}): {details}")
 
+    records = _extract_result_list(payload)
+    has_records_array = isinstance(records, list)
+
     has_data_array = isinstance(payload, dict) and isinstance(payload.get("data"), list)
     has_meta = isinstance(payload, dict) and isinstance(payload.get("meta"), dict)
     meta = payload.get("meta") if isinstance(payload, dict) else {}
     required_meta_keys = ("current_page", "per_page", "total")
     missing_meta_keys = [k for k in required_meta_keys if not isinstance(meta, dict) or k not in meta]
-    if not has_data_array or not has_meta or missing_meta_keys:
+    docs_compliant_shape = has_data_array and has_meta and len(missing_meta_keys) == 0
+
+    # Accept older Beacon response shapes while still surfacing docs-compliance status.
+    if not has_records_array:
         raise RuntimeError(
-            "Beacon smoke test response does not match documented shape "
-            f"(data array + meta.current_page/per_page/total). Missing: {missing_meta_keys or 'none'}"
+            "Beacon smoke test response does not include a records array "
+            "(expected either data[] or results[])."
         )
+
+    current_page, total_pages = _extract_page_progress(payload)
+    total = _extract_total_count(payload)
+    if current_page is None:
+        current_page = params["page"]
+    if total is None:
+        total = len(records)
+    if total_pages is None:
+        per_page = params["per_page"]
+        total_pages = max(1, int((total + per_page - 1) / per_page)) if isinstance(total, int) else 1
 
     return {
         "status_code": resp.status_code,
         "response_time_ms": elapsed_ms,
         "endpoint": endpoint,
-        "records_in_page": len(payload.get("data") or []),
+        "records_in_page": len(records),
         "meta": {
-            "current_page": meta.get("current_page"),
-            "per_page": meta.get("per_page"),
-            "total": meta.get("total"),
-            "total_pages": meta.get("total_pages"),
+            "current_page": current_page,
+            "per_page": meta.get("per_page") if isinstance(meta, dict) else params["per_page"],
+            "total": total,
+            "total_pages": total_pages,
         },
         "checks": {
+            "has_records_array": has_records_array,
             "has_data_array": has_data_array,
             "has_meta": has_meta,
             "required_meta_present": len(missing_meta_keys) == 0,
+            "docs_compliant_shape": docs_compliant_shape,
+            "legacy_compatible_shape": has_records_array and not docs_compliant_shape,
         },
     }
 
@@ -1781,10 +1800,16 @@ def admin_dashboard():
                     log_audit_event("Beacon Smoke Test Started", {"source": "beacon_api"})
                     smoke_result = run_beacon_api_smoke_test()
                     log_audit_event("Beacon Smoke Test Completed", {"source": "beacon_api", **smoke_result})
-                    st.success(
-                        f"Smoke test passed ({smoke_result['status_code']}) in "
-                        f"{smoke_result['response_time_ms']} ms."
-                    )
+                    if smoke_result.get("checks", {}).get("docs_compliant_shape"):
+                        st.success(
+                            f"Smoke test passed ({smoke_result['status_code']}) in "
+                            f"{smoke_result['response_time_ms']} ms."
+                        )
+                    else:
+                        st.warning(
+                            f"Smoke test passed with legacy response shape "
+                            f"({smoke_result['status_code']}) in {smoke_result['response_time_ms']} ms."
+                        )
                     st.json(smoke_result)
                 except Exception as e:
                     log_audit_event("Beacon Smoke Test Failed", {"source": "beacon_api", "error": str(e)})
