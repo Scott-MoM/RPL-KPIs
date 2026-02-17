@@ -238,49 +238,46 @@ def send_admin_notification(event_name, details):
         print(f"Notification Error: {e}")
 
 def run_sync_once(client, beacon_key, account_id, beacon_base_url):
-    datasets = {
-        "people": fetch_all("person", beacon_key, account_id, base_url=beacon_base_url),
-        "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
-        "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
-        "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
-        "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
-        "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
-    }
+    total_started = time.time()
+    fetch_started = time.time()
+    fetch_breakdown_ms = {}
 
-    count_people = upsert_rows(
-        "beacon_people",
-        [
-            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-            for e in [extract_entity(p) for p in datasets["people"]]
-            if e.get("id")
-        ],
-        client,
-    )
+    endpoint_plan = [
+        ("people", "person"),
+        ("organisations", "organization"),
+        ("events", "event"),
+        ("payments", "payment"),
+        ("subscriptions", "subscription"),
+        ("grants", "grant"),
+    ]
+    datasets = {}
+    for dataset_key, endpoint in endpoint_plan:
+        endpoint_started = time.time()
+        datasets[dataset_key] = fetch_all(endpoint, beacon_key, account_id, base_url=beacon_base_url)
+        fetch_breakdown_ms[dataset_key] = int((time.time() - endpoint_started) * 1000)
+    fetch_duration_ms = int((time.time() - fetch_started) * 1000)
 
-    count_orgs = upsert_rows(
-        "beacon_organisations",
-        [
-            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-            for e in [extract_entity(o) for o in datasets["organisations"]]
-            if e.get("id")
-        ],
-        client,
-    )
-
-    count_events = upsert_rows(
-        "beacon_events",
-        [
-            {
-                "id": x.get("id"),
-                "payload": x,
-                "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
-                "region": (x.get("c_region") or [x.get("region")] or [None])[0],
-            }
-            for x in [extract_entity(e) for e in datasets["events"]]
-            if x.get("id")
-        ],
-        client,
-    )
+    transform_started = time.time()
+    people_rows = [
+        {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+        for e in [extract_entity(p) for p in datasets["people"]]
+        if e.get("id")
+    ]
+    org_rows = [
+        {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+        for e in [extract_entity(o) for o in datasets["organisations"]]
+        if e.get("id")
+    ]
+    event_rows = [
+        {
+            "id": x.get("id"),
+            "payload": x,
+            "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
+            "region": (x.get("c_region") or [x.get("region")] or [None])[0],
+        }
+        for x in [extract_entity(e) for e in datasets["events"]]
+        if x.get("id")
+    ]
 
     payment_entities = {}
     for p in datasets["payments"]:
@@ -294,25 +291,26 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
         if rec_id and rec_id not in payment_entities:
             payment_entities[rec_id] = e
 
-    count_payments = upsert_rows(
-        "beacon_payments",
-        [
-            {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
-            for x in payment_entities.values()
-            if x.get("id")
-        ],
-        client,
-    )
+    payment_rows = [
+        {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
+        for x in payment_entities.values()
+        if x.get("id")
+    ]
+    grant_rows = [
+        {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
+        for x in [extract_entity(g) for g in datasets["grants"]]
+        if x.get("id")
+    ]
+    transform_duration_ms = int((time.time() - transform_started) * 1000)
 
-    count_grants = upsert_rows(
-        "beacon_grants",
-        [
-            {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
-            for x in [extract_entity(g) for g in datasets["grants"]]
-            if x.get("id")
-        ],
-        client,
-    )
+    upsert_started = time.time()
+    count_people = upsert_rows("beacon_people", people_rows, client)
+    count_orgs = upsert_rows("beacon_organisations", org_rows, client)
+    count_events = upsert_rows("beacon_events", event_rows, client)
+    count_payments = upsert_rows("beacon_payments", payment_rows, client)
+    count_grants = upsert_rows("beacon_grants", grant_rows, client)
+    upsert_duration_ms = int((time.time() - upsert_started) * 1000)
+    total_duration_ms = int((time.time() - total_started) * 1000)
 
     return {
         "people": count_people,
@@ -321,6 +319,11 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
         "payments": count_payments,
         "grants": count_grants,
         "synced_at": datetime.utcnow().isoformat() + "Z",
+        "fetch_duration_ms": fetch_duration_ms,
+        "transform_duration_ms": transform_duration_ms,
+        "upsert_duration_ms": upsert_duration_ms,
+        "total_duration_ms": total_duration_ms,
+        "fetch_breakdown_ms": fetch_breakdown_ms,
     }
 
 
