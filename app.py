@@ -350,6 +350,16 @@ def log_audit_event(action, details=None):
             # We print instead of st.error to avoid UI clutter on background ops
             print(f"Audit Log Error: {e}")
 
+def log_audit_state_change(state_key, action, details=None):
+    """Logs an event only when the tracked state payload changes."""
+    payload = details or {}
+    marker = json.dumps(payload, sort_keys=True, default=str)
+    ss_key = f"_audit_state_{state_key}"
+    if st.session_state.get(ss_key) == marker:
+        return
+    st.session_state[ss_key] = marker
+    log_audit_event(action, payload)
+
 # --- DATA HELPERS ---
 def _clean_ts(value):
     if value is None:
@@ -1657,11 +1667,13 @@ def admin_dashboard():
             if st.button("Sync Beacon API to Database"):
                 sync_progress = st.progress(0, text="Starting Beacon API sync...")
                 try:
+                    log_audit_event("Data Sync Started", {"source": "beacon_api"})
+
                     def _sync_ui_progress(progress, message):
                         sync_progress.progress(int(max(0, min(100, progress))), text=message)
 
                     result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_ui_progress)
-                    log_audit_event("Data Imported", {"source": "beacon_api", **result})
+                    log_audit_event("Data Sync Completed", {"source": "beacon_api", **result})
                     sync_progress.progress(100, text="Beacon API sync complete.")
                     st.success(
                         "API sync complete. "
@@ -1675,6 +1687,7 @@ def admin_dashboard():
                     st.cache_data.clear()
                 except Exception as e:
                     sync_progress.progress(100, text="Beacon API sync failed.")
+                    log_audit_event("Data Sync Failed", {"source": "beacon_api", "error": str(e)})
                     st.error(f"API sync failed: {e}")
         else:
             st.info("Admin client not available. Check Supabase secrets.")
@@ -1686,6 +1699,7 @@ def admin_dashboard():
         admin_client = get_admin_client()
         if admin_client:
             if st.button("Upload Beacon Exports"):
+                log_audit_event("CSV Upload Opened", {"source": "beacon_csv"})
                 st.session_state["show_upload_dialog"] = True
 
             if st.session_state.get("show_upload_dialog"):
@@ -1698,6 +1712,7 @@ def admin_dashboard():
                     grant_file = st.file_uploader("Grant CSV", type=["csv"])
 
                     if st.button("Import"):
+                        log_audit_event("Data Import Started", {"source": "beacon_csv"})
                         uploads = {
                             "people": _read_uploaded_csv(people_file),
                             "organization": _read_uploaded_csv(org_file),
@@ -1708,7 +1723,7 @@ def admin_dashboard():
                         result = import_beacon_uploads(admin_client, uploads)
                         
                         # --- AUDIT LOG ---
-                        log_audit_event("Data Imported", result)
+                        log_audit_event("Data Imported", {"source": "beacon_csv", **result})
                         
                         st.success(f"Imported: {result}")
                         st.session_state["show_upload_dialog"] = False
@@ -1720,6 +1735,7 @@ def admin_dashboard():
     col_sys_1, col_sys_2 = st.columns([1, 4])
     with col_sys_1:
         if st.button("Refresh All Dashboard Data"):
+            log_audit_event("Dashboard Refresh", {"scope": "all_cached_data"})
             st.cache_data.clear()
             st.success("Cache cleared. Reloading...")
             st.rerun()
@@ -1729,24 +1745,27 @@ def admin_dashboard():
     st.subheader("System Audit Log")
 
     if DB_TYPE == 'supabase':
-        # 1. Search & Filter Controls
-        col_search, col_filter = st.columns([3, 1])
-        search_term = col_search.text_input("Search Logs (User, Action, or Details)", placeholder="e.g. 'User Created' or 'scott@...'")
-        action_filter = col_filter.selectbox("Filter by Action", ["All", "User Created", "User Deleted", "Role Updated", "Data Imported", "Password Reset"])
-
-        # 2. Build Query
+        # 1. Build Query
         query = DB_CLIENT.table("audit_logs").select("*").order("created_at", desc=True).limit(200)
-        
-        if action_filter != "All":
-            query = query.eq("action", action_filter)
-            
-        # 3. Fetch & Display
+
+        # 2. Fetch & Display
         try:
             resp = query.execute()
             data = resp.data
             
             if data:
                 df_log = pd.DataFrame(data)
+
+                # Search & Filter Controls
+                col_search, col_filter = st.columns([3, 1])
+                search_term = col_search.text_input(
+                    "Search Logs (User, Action, or Details)",
+                    placeholder="e.g. 'Data Sync Completed' or 'scott@...'"
+                )
+                action_options = ["All"] + sorted(df_log["action"].dropna().astype(str).unique().tolist())
+                action_filter = col_filter.selectbox("Filter by Action", action_options)
+                if action_filter != "All":
+                    df_log = df_log[df_log["action"] == action_filter]
                 
                 # Convert timestamps to readable format
                 df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -1839,6 +1858,16 @@ def get_time_filters():
         st.sidebar.caption(f"Filtering: {start_date.date()} to {end_date.date()}")
     elif timeframe == "All Time":
         st.sidebar.caption("Filtering: All time")
+
+    log_audit_state_change(
+        "time_filters",
+        "Dashboard Filter Changed",
+        {
+            "timeframe": timeframe,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+        },
+    )
 
     return timeframe, start_date, end_date
 
@@ -2191,6 +2220,7 @@ def main():
             password_change_page()
             return
         if st.sidebar.button("Logout", key="logout"):
+            log_audit_event("Logout", {"from": "dashboard"})
             st.session_state['logged_in'] = False
             st.rerun()
         
@@ -2221,6 +2251,7 @@ def main():
         role = st.session_state.get('role')
         if role == 'Admin':
             view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Case Studies"])
+            log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "Admin Dashboard":
                 admin_dashboard()
             elif view == "KPI Dashboard":
@@ -2230,6 +2261,7 @@ def main():
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Manager':
             view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Case Studies"])
+            log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
             else:
@@ -2237,6 +2269,7 @@ def main():
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         else:
             view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Case Studies"])
+            log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
             else:
