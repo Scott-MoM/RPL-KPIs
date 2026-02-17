@@ -176,6 +176,17 @@ def inject_global_styles():
             color: #ffffff !important;
         }
 
+        /* Force BaseWeb internals (used by Streamlit radio/checkbox) */
+        [data-baseweb="radio"] *,
+        [data-baseweb="checkbox"] *,
+        [data-testid="stRadio"] *,
+        [data-testid="stCheckbox"] *,
+        [data-testid="stSidebar"] [data-baseweb="radio"] *,
+        [data-testid="stSidebar"] [data-baseweb="checkbox"] * {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+        }
+
         h1, h2, h3, h4 {
             letter-spacing: 0.2px;
         }
