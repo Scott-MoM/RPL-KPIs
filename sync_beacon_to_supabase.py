@@ -174,6 +174,155 @@ def log_system_audit(client, action, details=None, region="Global"):
         # Keep sync resilient even if audit logging fails.
         print(f"Audit Log Error: {e}")
 
+def _as_int(value, default):
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
+
+def is_retryable_error(exc):
+    msg = str(exc).lower()
+    retry_markers = [
+        "statement timeout",
+        "57014",
+        "timed out",
+        "timeout",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "connection reset",
+        "temporarily unavailable",
+    ]
+    return any(marker in msg for marker in retry_markers)
+
+def get_last_sync_action(client):
+    try:
+        resp = (
+            client.table("audit_logs")
+            .select("action, details, created_at")
+            .in_("action", ["Data Sync Completed", "Data Sync Failed"])
+            .order("created_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        rows = resp.data or []
+        for row in rows:
+            details = row.get("details") or {}
+            if details.get("source") == "beacon_api":
+                return row
+    except Exception:
+        return None
+    return None
+
+def send_admin_notification(event_name, details):
+    webhook_url = os.getenv("ADMIN_ALERT_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return
+    try:
+        repo = os.getenv("GITHUB_REPOSITORY", "")
+        run_id = os.getenv("GITHUB_RUN_ID", "")
+        server = os.getenv("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+        run_url = f"{server}/{repo}/actions/runs/{run_id}" if repo and run_id else ""
+        message = (
+            f"[{event_name}] Beacon sync ({details.get('trigger', 'unknown')}) "
+            f"source={details.get('source', 'beacon_api')} "
+            f"run_id={details.get('run_id') or run_id or 'n/a'} "
+            f"error={details.get('error', 'none')}"
+        )
+        if run_url:
+            message += f" run_url={run_url}"
+        requests.post(webhook_url, json={"text": message}, timeout=15)
+    except Exception as e:
+        print(f"Notification Error: {e}")
+
+def run_sync_once(client, beacon_key, account_id, beacon_base_url):
+    datasets = {
+        "people": fetch_all("person", beacon_key, account_id, base_url=beacon_base_url),
+        "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
+        "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
+        "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
+        "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
+        "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
+    }
+
+    count_people = upsert_rows(
+        "beacon_people",
+        [
+            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+            for e in [extract_entity(p) for p in datasets["people"]]
+            if e.get("id")
+        ],
+        client,
+    )
+
+    count_orgs = upsert_rows(
+        "beacon_organisations",
+        [
+            {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
+            for e in [extract_entity(o) for o in datasets["organisations"]]
+            if e.get("id")
+        ],
+        client,
+    )
+
+    count_events = upsert_rows(
+        "beacon_events",
+        [
+            {
+                "id": x.get("id"),
+                "payload": x,
+                "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
+                "region": (x.get("c_region") or [x.get("region")] or [None])[0],
+            }
+            for x in [extract_entity(e) for e in datasets["events"]]
+            if x.get("id")
+        ],
+        client,
+    )
+
+    payment_entities = {}
+    for p in datasets["payments"]:
+        e = extract_entity(p)
+        rec_id = e.get("id")
+        if rec_id:
+            payment_entities[rec_id] = e
+    for s in datasets["subscriptions"]:
+        e = extract_entity(s)
+        rec_id = e.get("id")
+        if rec_id and rec_id not in payment_entities:
+            payment_entities[rec_id] = e
+
+    count_payments = upsert_rows(
+        "beacon_payments",
+        [
+            {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
+            for x in payment_entities.values()
+            if x.get("id")
+        ],
+        client,
+    )
+
+    count_grants = upsert_rows(
+        "beacon_grants",
+        [
+            {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
+            for x in [extract_entity(g) for g in datasets["grants"]]
+            if x.get("id")
+        ],
+        client,
+    )
+
+    return {
+        "people": count_people,
+        "organisations": count_orgs,
+        "events": count_events,
+        "payments": count_payments,
+        "grants": count_grants,
+        "synced_at": datetime.utcnow().isoformat() + "Z",
+    }
+
 
 def main():
     secrets = load_secrets()
@@ -192,6 +341,8 @@ def main():
 
     client = create_client(supabase_url, supabase_key)
 
+    last_sync = get_last_sync_action(client)
+
     sync_context = {
         "source": "beacon_api",
         "trigger": "github_actions",
@@ -200,96 +351,44 @@ def main():
     }
     log_system_audit(client, "Data Sync Started", sync_context)
 
-    try:
-        datasets = {
-            "people": fetch_all("person", beacon_key, account_id, base_url=beacon_base_url),
-            "organisations": fetch_all("organization", beacon_key, account_id, base_url=beacon_base_url),
-            "events": fetch_all("event", beacon_key, account_id, base_url=beacon_base_url),
-            "payments": fetch_all("payment", beacon_key, account_id, base_url=beacon_base_url),
-            "subscriptions": fetch_all("subscription", beacon_key, account_id, base_url=beacon_base_url),
-            "grants": fetch_all("grant", beacon_key, account_id, base_url=beacon_base_url),
-        }
+    max_retries = max(0, _as_int(os.getenv("SYNC_MAX_RETRIES"), 1))
+    retry_delay_seconds = max(30, _as_int(os.getenv("SYNC_RETRY_DELAY_SECONDS"), 600))
+    attempt = 0
 
-        count_people = upsert_rows(
-            "beacon_people",
-            [
-                {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-                for e in [extract_entity(p) for p in datasets["people"]]
-                if e.get("id")
-            ],
-            client,
-        )
+    while True:
+        attempt += 1
+        attempt_context = {**sync_context, "attempt": attempt, "max_attempts": max_retries + 1}
+        if attempt > 1:
+            log_system_audit(client, "Data Sync Retry Attempt", attempt_context)
 
-        count_orgs = upsert_rows(
-            "beacon_organisations",
-            [
-                {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
-                for e in [extract_entity(o) for o in datasets["organisations"]]
-                if e.get("id")
-            ],
-            client,
-        )
+        try:
+            summary = run_sync_once(client, beacon_key, account_id, beacon_base_url)
+            result_details = {**attempt_context, **summary, "attempts_used": attempt}
+            log_system_audit(client, "Data Sync Completed", result_details)
 
-        count_events = upsert_rows(
-            "beacon_events",
-            [
-                {
-                    "id": x.get("id"),
-                    "payload": x,
-                    "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
-                    "region": (x.get("c_region") or [x.get("region")] or [None])[0],
-                }
-                for x in [extract_entity(e) for e in datasets["events"]]
-                if x.get("id")
-            ],
-            client,
-        )
+            previous_action = (last_sync or {}).get("action")
+            if previous_action == "Data Sync Failed":
+                send_admin_notification("Data Sync Recovered", result_details)
+            elif os.getenv("ADMIN_NOTIFY_ON_SUCCESS", "").strip().lower() in ("1", "true", "yes"):
+                send_admin_notification("Data Sync Completed", result_details)
 
-        payment_entities = {}
-        for p in datasets["payments"]:
-            e = extract_entity(p)
-            rec_id = e.get("id")
-            if rec_id:
-                payment_entities[rec_id] = e
-        for s in datasets["subscriptions"]:
-            e = extract_entity(s)
-            rec_id = e.get("id")
-            if rec_id and rec_id not in payment_entities:
-                payment_entities[rec_id] = e
+            print(json.dumps(summary, indent=2))
+            break
+        except Exception as e:
+            error_details = {**attempt_context, "error": str(e)}
+            retryable = is_retryable_error(e)
+            if retryable and attempt <= max_retries:
+                log_system_audit(
+                    client,
+                    "Data Sync Retry Scheduled",
+                    {**error_details, "retry_delay_seconds": retry_delay_seconds},
+                )
+                time.sleep(retry_delay_seconds)
+                continue
 
-        count_payments = upsert_rows(
-            "beacon_payments",
-            [
-                {"id": x.get("id"), "payload": x, "payment_date": x.get("payment_date") or x.get("date") or x.get("created_at")}
-                for x in payment_entities.values()
-                if x.get("id")
-            ],
-            client,
-        )
-
-        count_grants = upsert_rows(
-            "beacon_grants",
-            [
-                {"id": x.get("id"), "payload": x, "close_date": x.get("close_date") or x.get("award_date") or x.get("created_at")}
-                for x in [extract_entity(g) for g in datasets["grants"]]
-                if x.get("id")
-            ],
-            client,
-        )
-
-        summary = {
-            "people": count_people,
-            "organisations": count_orgs,
-            "events": count_events,
-            "payments": count_payments,
-            "grants": count_grants,
-            "synced_at": datetime.utcnow().isoformat() + "Z",
-        }
-        log_system_audit(client, "Data Sync Completed", {**sync_context, **summary})
-        print(json.dumps(summary, indent=2))
-    except Exception as e:
-        log_system_audit(client, "Data Sync Failed", {**sync_context, "error": str(e)})
-        raise
+            log_system_audit(client, "Data Sync Failed", error_details)
+            send_admin_notification("Data Sync Failed", error_details)
+            raise
 
 
 if __name__ == "__main__":

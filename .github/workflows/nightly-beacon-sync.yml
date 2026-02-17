@@ -30,4 +30,8 @@ jobs:
           BEACON_API_KEY: ${{ secrets.BEACON_API_KEY }}
           BEACON_ACCOUNT_ID: ${{ secrets.BEACON_ACCOUNT_ID }}
           BEACON_BASE_URL: ${{ secrets.BEACON_BASE_URL }}
+          SYNC_MAX_RETRIES: "1"
+          SYNC_RETRY_DELAY_SECONDS: "600"
+          ADMIN_ALERT_WEBHOOK_URL: ${{ secrets.ADMIN_ALERT_WEBHOOK_URL }}
+          ADMIN_NOTIFY_ON_SUCCESS: ${{ vars.ADMIN_NOTIFY_ON_SUCCESS }}
         run: python sync_beacon_to_supabase.py

@@ -786,6 +786,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         if progress_callback:
             progress_callback(progress, _status_text(progress, message))
 
+    total_started = time.time()
     now_iso = datetime.utcnow().isoformat() + "Z"
     beacon_key = _get_secret_or_env("BEACON_API_KEY")
     beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
@@ -802,17 +803,23 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         ("grants", "grant", "grants"),
     ]
     datasets = {}
+    fetch_breakdown_ms = {}
+    fetch_started = time.time()
     _report(5, "Starting Beacon API sync...")
     for idx, (dataset_key, endpoint, label) in enumerate(fetch_plan):
         fetch_start = 5 + int((idx / len(fetch_plan)) * 45)
         fetch_end = 5 + int(((idx + 1) / len(fetch_plan)) * 45)
         _report(fetch_start, f"Fetching Beacon {label} ({idx + 1} of {len(fetch_plan)} datasets)...")
+        endpoint_started = time.time()
         datasets[dataset_key] = _fetch_beacon_entities(
             beacon_base_url, beacon_key, beacon_account_id, endpoint
         )
+        fetch_breakdown_ms[dataset_key] = int((time.time() - endpoint_started) * 1000)
         _report(fetch_end, f"Fetched Beacon {label}: {len(datasets[dataset_key])} records.")
+    fetch_duration_ms = int((time.time() - fetch_started) * 1000)
 
     _report(55, "Transforming Beacon records...")
+    transform_started = time.time()
 
     people_seen = {}
     for row in datasets["people"]:
@@ -891,10 +898,12 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     event_rows = list(event_seen.values())
     payment_rows = list(payment_seen.values())
     grant_rows = list(grant_seen.values())
+    transform_duration_ms = int((time.time() - transform_started) * 1000)
 
     total_records = len(people_rows) + len(org_rows) + len(event_rows) + len(payment_rows) + len(grant_rows)
     synced_records = 0
 
+    upsert_started = time.time()
     _report(68, f"Preparing import: {synced_records} out of {total_records} records synced.")
     _report(72, f"Upserting people ({len(people_rows)}) and organisations ({len(org_rows)})...")
     if people_rows:
@@ -921,8 +930,10 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
         synced_records += len(grant_rows)
         _report(97, f"Grants upserted: {synced_records} out of {total_records} records synced.")
+    upsert_duration_ms = int((time.time() - upsert_started) * 1000)
 
     _report(100, f"Beacon API sync complete. {synced_records} out of {total_records} records synced.")
+    total_duration_ms = int((time.time() - total_started) * 1000)
 
     return {
         "people": len(people_rows),
@@ -931,6 +942,11 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         "payments": len(payment_rows),
         "grants": len(grant_rows),
         "synced_at": now_iso,
+        "fetch_duration_ms": fetch_duration_ms,
+        "transform_duration_ms": transform_duration_ms,
+        "upsert_duration_ms": upsert_duration_ms,
+        "total_duration_ms": total_duration_ms,
+        "fetch_breakdown_ms": fetch_breakdown_ms,
     }
 
 # --- LOCAL FILE HELPERS (Fallback) ---
@@ -1098,7 +1114,7 @@ def create_user(name, email, password, role, region):
         save_local_json(USER_DB_FILE, db_data)
         return True
 
-def update_user_role(email, new_role):
+def update_user_role(email, new_role, audit_reason=None, audit_confirmed=False):
     email = email.strip().lower()
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
@@ -1111,7 +1127,11 @@ def update_user_role(email, new_role):
         admin_client.table('user_roles').update({"role_id": role_id}).eq('email', email).execute()
         
         # --- AUDIT LOG ---
-        log_audit_event("Role Updated", {"target_email": email, "new_role": new_role})
+        details = {"target_email": email, "new_role": new_role}
+        if audit_reason:
+            details["reason"] = audit_reason
+        details["confirmed"] = bool(audit_confirmed)
+        log_audit_event("Role Updated", details)
         
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
@@ -1122,7 +1142,7 @@ def update_user_role(email, new_role):
                 save_local_json(USER_DB_FILE, db_data)
                 return
 
-def delete_user(email):
+def delete_user(email, audit_reason=None, audit_confirmed=False):
     email = email.strip().lower()
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
@@ -1136,7 +1156,11 @@ def delete_user(email):
             admin_client.auth.admin.delete_user(user_id)
             
             # --- AUDIT LOG ---
-            log_audit_event("User Deleted", {"target_email": email})
+            details = {"target_email": email}
+            if audit_reason:
+                details["reason"] = audit_reason
+            details["confirmed"] = bool(audit_confirmed)
+            log_audit_event("User Deleted", details)
             
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
@@ -1774,22 +1798,86 @@ def admin_dashboard():
                 st.subheader("Update Role")
                 target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
                 new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin"], key="role_up")
+                role_reason = st.text_input("Reason for role change", key="role_reason")
+                role_confirm = st.checkbox("I confirm this role change", key="role_confirm")
                 if st.button("Update Role"):
-                    update_user_role(target_role_email, new_role_update)
-                    st.success("Role updated.")
-                    st.rerun()
+                    if not role_reason.strip():
+                        st.error("Please provide a reason for the role update.")
+                    elif not role_confirm:
+                        st.error("Please confirm the role update.")
+                    else:
+                        update_user_role(
+                            target_role_email,
+                            new_role_update,
+                            audit_reason=role_reason.strip(),
+                            audit_confirmed=True,
+                        )
+                        st.success("Role updated.")
+                        st.rerun()
 
             with col3:
                 st.subheader("Delete User")
                 target_del = st.selectbox("Select User", user_emails, key="del_sel")
+                delete_reason = st.text_input("Reason for deletion", key="delete_reason")
+                delete_confirm = st.checkbox("I confirm this user deletion", key="delete_confirm")
                 if st.button("Delete User", type="primary"):
-                    delete_user(target_del)
-                    st.success("User deleted.")
-                    st.rerun()
+                    if not delete_reason.strip():
+                        st.error("Please provide a reason for deletion.")
+                    elif not delete_confirm:
+                        st.error("Please confirm user deletion.")
+                    else:
+                        delete_user(
+                            target_del,
+                            audit_reason=delete_reason.strip(),
+                            audit_confirmed=True,
+                        )
+                        st.success("User deleted.")
+                        st.rerun()
 
     # --- SYSTEM ACTIONS ---
     st.markdown("---")
     st.subheader("System Actions")
+    st.subheader("Sync Performance")
+    if DB_TYPE == 'supabase':
+        try:
+            perf_resp = (
+                DB_CLIENT.table("audit_logs")
+                .select("created_at, action, details")
+                .in_("action", ["Data Sync Completed", "Data Sync Failed"])
+                .order("created_at", desc=True)
+                .limit(100)
+                .execute()
+            )
+            perf_rows = perf_resp.data or []
+        except Exception:
+            perf_rows = []
+
+        completed = []
+        for row in perf_rows:
+            if row.get("action") != "Data Sync Completed":
+                continue
+            details = row.get("details") or {}
+            if details.get("source") != "beacon_api":
+                continue
+            completed.append(details)
+
+        if completed:
+            latest = completed[0]
+            c_perf1, c_perf2, c_perf3, c_perf4 = st.columns(4)
+            c_perf1.metric("Last Total", f"{latest.get('total_duration_ms', 0) / 1000:.1f}s")
+            c_perf2.metric("Fetch", f"{latest.get('fetch_duration_ms', 0) / 1000:.1f}s")
+            c_perf3.metric("Transform", f"{latest.get('transform_duration_ms', 0) / 1000:.1f}s")
+            c_perf4.metric("Upsert", f"{latest.get('upsert_duration_ms', 0) / 1000:.1f}s")
+
+            recent = completed[:10]
+            if recent:
+                avg_total = sum(int(x.get("total_duration_ms") or 0) for x in recent) / len(recent)
+                st.caption(f"Average total duration (last {len(recent)} successful syncs): {avg_total / 1000:.1f}s")
+        else:
+            st.info("No completed Beacon sync performance records found yet.")
+    else:
+        st.info("Sync performance is available only in Supabase mode.")
+
     st.subheader("Beacon API Sync")
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
@@ -1883,13 +1971,27 @@ def admin_dashboard():
             st.info("Admin client not available. Check Supabase secrets.")
     else:
         st.info("CSV upload is available only in Supabase mode.")
-    col_sys_1, col_sys_2 = st.columns([1, 4])
+    col_sys_1, col_sys_2 = st.columns([1, 3])
+    refresh_reason = col_sys_2.text_input("Reason for full refresh", key="refresh_reason")
+    refresh_confirm = col_sys_2.checkbox("I confirm full dashboard cache refresh", key="refresh_confirm")
     with col_sys_1:
         if st.button("Refresh All Dashboard Data"):
-            log_audit_event("Dashboard Refresh", {"scope": "all_cached_data"})
-            st.cache_data.clear()
-            st.success("Cache cleared. Reloading...")
-            st.rerun()
+            if not refresh_reason.strip():
+                st.error("Please provide a reason for full refresh.")
+            elif not refresh_confirm:
+                st.error("Please confirm full dashboard refresh.")
+            else:
+                log_audit_event(
+                    "Dashboard Refresh",
+                    {
+                        "scope": "all_cached_data",
+                        "reason": refresh_reason.strip(),
+                        "confirmed": True,
+                    },
+                )
+                st.cache_data.clear()
+                st.success("Cache cleared. Reloading...")
+                st.rerun()
 
     # --- AUDIT LOG UI ---
     st.markdown("---")
