@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import time
 from datetime import datetime
 
 try:
@@ -50,6 +51,34 @@ def extract_results(payload):
         return payload
     return []
 
+def extract_total_count(payload):
+    if not isinstance(payload, dict):
+        return None
+    meta = payload.get("meta")
+    if isinstance(meta, dict):
+        total = meta.get("total")
+        if isinstance(total, int):
+            return total
+    total = payload.get("total")
+    if isinstance(total, int):
+        return total
+    return None
+
+def extract_page_progress(payload):
+    if not isinstance(payload, dict):
+        return None, None
+    meta = payload.get("meta")
+    if isinstance(meta, dict):
+        current_page = meta.get("current_page")
+        total_pages = meta.get("total_pages")
+        if isinstance(current_page, int) and isinstance(total_pages, int):
+            return current_page, total_pages
+    current_page = payload.get("current_page")
+    total_pages = payload.get("total_pages")
+    if isinstance(current_page, int) and isinstance(total_pages, int):
+        return current_page, total_pages
+    return None, None
+
 
 def extract_entity(record):
     if isinstance(record, dict) and isinstance(record.get("entity"), dict):
@@ -57,7 +86,7 @@ def extract_entity(record):
     return record if isinstance(record, dict) else {}
 
 
-def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=100, max_pages=200):
+def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pages=200):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -67,7 +96,21 @@ def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=100, max_pa
     page = 1
     while page <= max_pages:
         url = build_beacon_url(endpoint, account_id, base_url=base_url)
-        resp = requests.get(url, headers=headers, params={"page": page, "per_page": per_page}, timeout=30)
+        params = {
+            "page": page,
+            "per_page": per_page,
+            "sort_by": "created_at",
+            "sort_direction": "desc",
+        }
+        resp = None
+        for attempt in range(4):
+            resp = requests.get(url, headers=headers, params=params, timeout=30)
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                break
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+        if resp is None:
+            raise SystemExit(f"Beacon request failed for {endpoint}: no response")
         if resp.status_code >= 400:
             try:
                 details = resp.json()
@@ -81,8 +124,11 @@ def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=100, max_pa
         all_rows.extend(rows)
         if len(rows) < per_page:
             break
-        total = data.get("total") if isinstance(data, dict) else None
+        total = extract_total_count(data)
         if isinstance(total, int) and len(all_rows) >= total:
+            break
+        current_page, total_pages = extract_page_progress(data)
+        if isinstance(current_page, int) and isinstance(total_pages, int) and current_page >= total_pages:
             break
         page += 1
     return all_rows
@@ -105,8 +151,10 @@ def main():
 
     if not supabase_url or not supabase_key:
         raise SystemExit("Missing Supabase URL or key. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.")
-    if not beacon_key or not account_id:
-        raise SystemExit("Missing Beacon credentials. Set BEACON_API_KEY and BEACON_ACCOUNT_ID.")
+    if not beacon_key:
+        raise SystemExit("Missing Beacon credentials. Set BEACON_API_KEY.")
+    if not beacon_base_url and not account_id:
+        raise SystemExit("Set BEACON_BASE_URL (preferred) or BEACON_ACCOUNT_ID.")
 
     client = create_client(supabase_url, supabase_key)
 

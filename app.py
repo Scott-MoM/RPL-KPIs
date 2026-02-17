@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import os
 import requests
+import time
 import plotly.express as px
 from passlib.hash import pbkdf2_sha256
 from datetime import datetime
@@ -584,6 +585,34 @@ def _extract_result_list(response_json):
         return response_json.get("data") or []
     return []
 
+def _extract_total_count(response_json):
+    if not isinstance(response_json, dict):
+        return None
+    meta = response_json.get("meta")
+    if isinstance(meta, dict):
+        total = meta.get("total")
+        if isinstance(total, int):
+            return total
+    total = response_json.get("total")
+    if isinstance(total, int):
+        return total
+    return None
+
+def _extract_page_progress(response_json):
+    if not isinstance(response_json, dict):
+        return None, None
+    meta = response_json.get("meta")
+    if isinstance(meta, dict):
+        current_page = meta.get("current_page")
+        total_pages = meta.get("total_pages")
+        if isinstance(current_page, int) and isinstance(total_pages, int):
+            return current_page, total_pages
+    current_page = response_json.get("current_page")
+    total_pages = response_json.get("total_pages")
+    if isinstance(current_page, int) and isinstance(total_pages, int):
+        return current_page, total_pages
+    return None, None
+
 def _extract_entity(record):
     if isinstance(record, dict) and isinstance(record.get("entity"), dict):
         return record.get("entity") or {}
@@ -618,7 +647,7 @@ def _extract_region_tags(record):
             out.append(s)
     return out
 
-def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100, max_pages=200):
+def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50, max_pages=200):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -628,7 +657,21 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100
     page = 1
     while page <= max_pages:
         url = _build_beacon_url(base_url, account_id, endpoint)
-        resp = requests.get(url, headers=headers, params={"page": page, "per_page": per_page}, timeout=45)
+        params = {
+            "page": page,
+            "per_page": per_page,
+            "sort_by": "created_at",
+            "sort_direction": "desc",
+        }
+        resp = None
+        for attempt in range(4):
+            resp = requests.get(url, headers=headers, params=params, timeout=45)
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                break
+            if attempt < 3:
+                time.sleep(2 ** attempt)
+        if resp is None:
+            raise RuntimeError(f"Beacon API request failed for {endpoint}: no response")
         if resp.status_code >= 400:
             try:
                 details = resp.json()
@@ -642,11 +685,79 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=100
         all_rows.extend(rows)
         if len(rows) < per_page:
             break
-        total = payload.get("total") if isinstance(payload, dict) else None
+        total = _extract_total_count(payload)
         if isinstance(total, int) and len(all_rows) >= total:
+            break
+        current_page, total_pages = _extract_page_progress(payload)
+        if isinstance(current_page, int) and isinstance(total_pages, int) and current_page >= total_pages:
             break
         page += 1
     return all_rows
+
+def run_beacon_api_smoke_test():
+    beacon_key = _get_secret_or_env("BEACON_API_KEY")
+    beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
+    beacon_account_id = _get_secret_or_env("BEACON_ACCOUNT_ID")
+    if not beacon_key:
+        raise RuntimeError("Missing BEACON_API_KEY in Streamlit secrets or environment.")
+    if not beacon_base_url and not beacon_account_id:
+        raise RuntimeError("Set BEACON_BASE_URL (preferred) or BEACON_ACCOUNT_ID.")
+
+    endpoint = "person"
+    url = _build_beacon_url(beacon_base_url, beacon_account_id, endpoint)
+    headers = {
+        "Authorization": f"Bearer {beacon_key}",
+        "Content-Type": "application/json",
+        "Beacon-Application": "developer_api",
+    }
+    params = {
+        "page": 1,
+        "per_page": 1,
+        "sort_by": "created_at",
+        "sort_direction": "desc",
+    }
+
+    started = time.time()
+    resp = requests.get(url, headers=headers, params=params, timeout=45)
+    elapsed_ms = int((time.time() - started) * 1000)
+
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = {}
+
+    if resp.status_code >= 400:
+        details = payload if isinstance(payload, dict) and payload else (resp.text[:500] or "No details")
+        raise RuntimeError(f"Beacon smoke test failed ({resp.status_code}): {details}")
+
+    has_data_array = isinstance(payload, dict) and isinstance(payload.get("data"), list)
+    has_meta = isinstance(payload, dict) and isinstance(payload.get("meta"), dict)
+    meta = payload.get("meta") if isinstance(payload, dict) else {}
+    required_meta_keys = ("current_page", "per_page", "total")
+    missing_meta_keys = [k for k in required_meta_keys if not isinstance(meta, dict) or k not in meta]
+    if not has_data_array or not has_meta or missing_meta_keys:
+        raise RuntimeError(
+            "Beacon smoke test response does not match documented shape "
+            f"(data array + meta.current_page/per_page/total). Missing: {missing_meta_keys or 'none'}"
+        )
+
+    return {
+        "status_code": resp.status_code,
+        "response_time_ms": elapsed_ms,
+        "endpoint": endpoint,
+        "records_in_page": len(payload.get("data") or []),
+        "meta": {
+            "current_page": meta.get("current_page"),
+            "per_page": meta.get("per_page"),
+            "total": meta.get("total"),
+            "total_pages": meta.get("total_pages"),
+        },
+        "checks": {
+            "has_data_array": has_data_array,
+            "has_meta": has_meta,
+            "required_meta_present": len(missing_meta_keys) == 0,
+        },
+    }
 
 def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     def _status_text(progress, message):
@@ -1664,7 +1775,22 @@ def admin_dashboard():
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
         if admin_client:
-            if st.button("Sync Beacon API to Database"):
+            col_smoke, col_sync = st.columns(2)
+            if col_smoke.button("Run Beacon API Smoke Test"):
+                try:
+                    log_audit_event("Beacon Smoke Test Started", {"source": "beacon_api"})
+                    smoke_result = run_beacon_api_smoke_test()
+                    log_audit_event("Beacon Smoke Test Completed", {"source": "beacon_api", **smoke_result})
+                    st.success(
+                        f"Smoke test passed ({smoke_result['status_code']}) in "
+                        f"{smoke_result['response_time_ms']} ms."
+                    )
+                    st.json(smoke_result)
+                except Exception as e:
+                    log_audit_event("Beacon Smoke Test Failed", {"source": "beacon_api", "error": str(e)})
+                    st.error(f"Smoke test failed: {e}")
+
+            if col_sync.button("Sync Beacon API to Database"):
                 sync_progress = st.progress(0, text="Starting Beacon API sync...")
                 try:
                     log_audit_event("Data Sync Started", {"source": "beacon_api"})
