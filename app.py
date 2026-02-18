@@ -2003,6 +2003,11 @@ def render_manual_sync_status():
         if not state:
             return None, False
 
+    # Auto-hide completed/failed sync from sidebar once handled.
+    if state.get("status") in ("completed", "failed"):
+        st.session_state.pop("manual_sync_job_id", None)
+        return state, False
+
     status = state.get("status", "unknown")
     progress = int(state.get("progress", 0))
     message = state.get("message", "Working...")
