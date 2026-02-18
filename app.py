@@ -2497,6 +2497,11 @@ def main():
         
         badge_ts = datetime.now().strftime("%Y%m%d%H%M")
         st.sidebar.markdown(
+            f"[![Keep The Dashboard Awake]"
+            f"(https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/keep-streamlit-awake.yml/badge.svg?branch=main&t={badge_ts})"
+            f"](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/keep-streamlit-awake.yml)"
+        )
+        st.sidebar.markdown(
             f"[![Nightly Beacon Sync]"
             f"(https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml/badge.svg?branch=main&t={badge_ts})"
             f"](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml)"
