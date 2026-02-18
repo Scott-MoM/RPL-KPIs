@@ -2263,6 +2263,12 @@ def admin_dashboard():
                 else:
                     st.success("Manual sync started in background. You can switch to KPI Dashboard while it runs.")
                     st.rerun()
+
+            active_job_id = st.session_state.get("manual_sync_job_id")
+            active_state = _get_sync_job_state(active_job_id) if active_job_id else None
+            if active_state:
+                st.markdown("#### Active Sync")
+                render_manual_sync_main_panel(active_state)
         else:
             st.info("Admin client not available. Check Supabase secrets.")
     else:
