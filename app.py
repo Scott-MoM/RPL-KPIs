@@ -2692,8 +2692,6 @@ def get_time_filters():
         custom_end = st.sidebar.date_input("End date", value=today)
         if custom_end < custom_start:
             st.sidebar.error("End date must be on or after start date.")
-        elif (custom_end - custom_start).days > 92:
-            st.sidebar.error("Date range must be 3 months or less.")
         else:
             start_date = datetime.combine(custom_start, datetime.min.time())
             end_date = datetime.combine(custom_end, datetime.max.time())
