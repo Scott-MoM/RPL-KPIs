@@ -23,7 +23,7 @@ jobs:
             CODE="$(curl -A "$USER_AGENT" -sS -o /dev/null -w "%{http_code}" \
               --max-time 60 --retry 2 --retry-delay 5 --max-redirs 10 "$URL" || true)"
 
-            if [[ "$CODE" =~ ^(200|204|301|302|307|308)$ ]]; then
+            if [[ "$CODE" =~ ^[23][0-9][0-9]$ ]]; then
               echo "Ping OK for $URL (HTTP $CODE)"
               exit 0
             fi
