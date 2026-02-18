@@ -1878,20 +1878,33 @@ def admin_dashboard():
                 details = row.get("details") or {}
                 if details.get("source") != "beacon_api":
                     continue
-                completed.append(details)
+                completed.append({
+                    "created_at": row.get("created_at"),
+                    "details": details,
+                })
 
             if completed:
                 latest = completed[0]
+                latest_details = latest.get("details") or {}
                 c_perf1, c_perf2, c_perf3, c_perf4 = st.columns(4)
-                c_perf1.metric("Last Total", f"{latest.get('total_duration_ms', 0) / 1000:.1f}s")
-                c_perf2.metric("Fetch", f"{latest.get('fetch_duration_ms', 0) / 1000:.1f}s")
-                c_perf3.metric("Transform", f"{latest.get('transform_duration_ms', 0) / 1000:.1f}s")
-                c_perf4.metric("Upsert", f"{latest.get('upsert_duration_ms', 0) / 1000:.1f}s")
+                c_perf1.metric("Last Total", f"{latest_details.get('total_duration_ms', 0) / 1000:.1f}s")
+                c_perf2.metric("Fetch", f"{latest_details.get('fetch_duration_ms', 0) / 1000:.1f}s")
+                c_perf3.metric("Transform", f"{latest_details.get('transform_duration_ms', 0) / 1000:.1f}s")
+                c_perf4.metric("Upsert", f"{latest_details.get('upsert_duration_ms', 0) / 1000:.1f}s")
 
                 recent = completed[:10]
                 if recent:
-                    avg_total = sum(int(x.get("total_duration_ms") or 0) for x in recent) / len(recent)
+                    avg_total = sum(int((x.get("details") or {}).get("total_duration_ms") or 0) for x in recent) / len(recent)
                     st.caption(f"Average total duration (last {len(recent)} successful syncs): {avg_total / 1000:.1f}s")
+
+                last_sync_raw = latest.get("created_at") or latest_details.get("synced_at")
+                last_sync_ts = pd.to_datetime(last_sync_raw, utc=True, errors="coerce")
+                if pd.isna(last_sync_ts):
+                    last_sync_label = "Unknown"
+                else:
+                    last_sync_label = last_sync_ts.strftime("%d/%m/%Y %H:%M UTC")
+                sync_type = "Automatic" if (latest_details.get("trigger") == "github_actions") else "Manual"
+                st.caption(f"Last successful sync: {last_sync_label} | Type: {sync_type}")
             else:
                 st.info("No completed Beacon sync performance records found yet.")
         else:
