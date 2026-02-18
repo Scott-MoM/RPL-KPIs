@@ -1632,7 +1632,7 @@ def get_last_refresh_timestamp():
     except Exception:
         return None
 
-def clear_dashboard_data_except_users(admin_client):
+def clear_dashboard_data_except_users(admin_client, progress_callback=None):
     # Deliberately excludes user/auth tables (e.g. user_roles, roles, auth users).
     tables = [
         ("beacon_people", "id"),
@@ -1646,7 +1646,14 @@ def clear_dashboard_data_except_users(admin_client):
     deleted = {}
     errors = []
 
-    for table, key in tables:
+    total_tables = len(tables)
+    if progress_callback:
+        progress_callback(0, "Starting dashboard data reset...")
+
+    for idx, (table, key) in enumerate(tables):
+        if progress_callback:
+            start_pct = int((idx / total_tables) * 100)
+            progress_callback(start_pct, f"Clearing {table}...")
         table_deleted = 0
         while True:
             try:
@@ -1667,6 +1674,9 @@ def clear_dashboard_data_except_users(admin_client):
                 break
 
         deleted[table] = table_deleted
+        if progress_callback:
+            done_pct = int(((idx + 1) / total_tables) * 100)
+            progress_callback(done_pct, f"Cleared {table}: {table_deleted} rows.")
 
     return deleted, errors
 
@@ -2058,7 +2068,15 @@ def admin_dashboard():
                     st.error("Admin client not available. Check Supabase secrets.")
                     return
 
-                deleted_counts, delete_errors = clear_dashboard_data_except_users(refresh_client)
+                refresh_progress = st.progress(0, text="Preparing dashboard data reset...")
+
+                def _refresh_ui_progress(progress, message):
+                    refresh_progress.progress(int(max(0, min(100, progress))), text=message)
+
+                deleted_counts, delete_errors = clear_dashboard_data_except_users(
+                    refresh_client,
+                    progress_callback=_refresh_ui_progress
+                )
                 log_audit_event(
                     "Dashboard Refresh",
                     {
@@ -2071,8 +2089,10 @@ def admin_dashboard():
                 )
                 st.cache_data.clear()
                 if delete_errors:
+                    refresh_progress.progress(100, text="Dashboard data reset finished with errors.")
                     st.warning("Dashboard data reset completed with some errors. Check audit logs for details.")
                 else:
+                    refresh_progress.progress(100, text="Dashboard data reset complete.")
                     st.success("Dashboard data reset complete (users kept). Reloading...")
                 st.rerun()
 
