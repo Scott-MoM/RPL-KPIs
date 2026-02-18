@@ -1765,11 +1765,11 @@ def start_manual_sync_job(user_email, region):
 def render_manual_sync_status():
     job_id = st.session_state.get("manual_sync_job_id")
     if not job_id:
-        return False
+        return None, False
 
     state = _get_sync_job_state(job_id)
     if not state:
-        return False
+        return None, False
 
     status = state.get("status", "unknown")
     progress = int(state.get("progress", 0))
@@ -1804,6 +1804,9 @@ def render_manual_sync_status():
 
     if elapsed is not None:
         st.sidebar.caption(f"Elapsed: {elapsed:.1f}s")
+        if status in ("queued", "running") and progress > 3:
+            remaining = max(0.0, elapsed * (100 - progress) / progress)
+            st.sidebar.caption(f"ETA: {remaining:.1f}s")
 
     if status == "completed":
         result = state.get("result") or {}
@@ -1818,7 +1821,58 @@ def render_manual_sync_status():
     if status == "failed" and state.get("error"):
         st.sidebar.caption(f"Error: {state.get('error')}")
 
-    return status in ("queued", "running")
+    return state, status in ("queued", "running")
+
+def render_manual_sync_main_panel(sync_state):
+    if not sync_state:
+        return
+
+    status = sync_state.get("status", "unknown")
+    progress = int(sync_state.get("progress", 0))
+    message = sync_state.get("message", "Working...")
+    started_at = sync_state.get("started_at")
+    ended_at = sync_state.get("ended_at")
+
+    elapsed = None
+    if started_at:
+        elapsed = (ended_at or time.time()) - started_at
+
+    st.markdown("### Manual Sync Progress")
+    st.progress(progress, text=f"{progress}% | {message}")
+    if status == "running":
+        st.info("Sync is running in the background. You can keep using the dashboard.")
+    elif status == "queued":
+        st.info("Sync is queued and will start shortly.")
+    elif status == "completed":
+        st.success("Sync completed.")
+    elif status == "failed":
+        st.error("Sync failed.")
+    else:
+        st.warning(f"Sync status: {status}")
+
+    parts = []
+    if elapsed is not None:
+        parts.append(f"Elapsed: {elapsed:.1f}s")
+    if status in ("queued", "running") and elapsed is not None and progress > 3:
+        remaining = max(0.0, elapsed * (100 - progress) / progress)
+        parts.append(f"ETA: {remaining:.1f}s")
+    if parts:
+        st.caption(" | ".join(parts))
+
+    if status == "completed":
+        result = sync_state.get("result") or {}
+        st.caption(
+            f"Updated: People {result.get('people', 0)}, Organisations {result.get('organisations', 0)}, "
+            f"Events {result.get('events', 0)}, Payments {result.get('payments', 0)}, Grants {result.get('grants', 0)}"
+        )
+        st.caption(
+            f"Durations: Total {result.get('total_duration_ms', 0) / 1000:.1f}s | "
+            f"Fetch {result.get('fetch_duration_ms', 0) / 1000:.1f}s | "
+            f"Transform {result.get('transform_duration_ms', 0) / 1000:.1f}s | "
+            f"Upsert {result.get('upsert_duration_ms', 0) / 1000:.1f}s"
+        )
+    if status == "failed" and sync_state.get("error"):
+        st.caption(f"Error details: {sync_state.get('error')}")
 
 def clear_dashboard_data_except_users(admin_client, progress_callback=None):
     # Deliberately excludes user/auth tables (e.g. user_roles, roles, auth users).
@@ -2764,7 +2818,8 @@ def main():
             f"(https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml/badge.svg?branch=main&t={badge_ts})"
             f"](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml)"
         )
-        sync_running = render_manual_sync_status()
+        sync_state, sync_running = render_manual_sync_status()
+        render_manual_sync_main_panel(sync_state)
 
         # Last Data Refresh card
         last_refresh = get_last_refresh_timestamp()
