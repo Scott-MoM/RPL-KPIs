@@ -534,7 +534,15 @@ def _read_uploaded_csv(uploaded_file):
     df = df.where(pd.notnull(df), None)
     return df.to_dict(orient="records")
 
-def _upsert_in_batches(admin_client, table, rows, on_conflict="id", default_chunk_size=200, min_chunk_size=25):
+def _upsert_in_batches(
+    admin_client,
+    table,
+    rows,
+    on_conflict="id",
+    default_chunk_size=200,
+    min_chunk_size=25,
+    batch_progress_callback=None,
+):
     if not rows:
         return 0
     total = len(rows)
@@ -546,6 +554,11 @@ def _upsert_in_batches(admin_client, table, rows, on_conflict="id", default_chun
             try:
                 admin_client.table(table).upsert(chunk, on_conflict=on_conflict).execute()
                 index += len(chunk)
+                if batch_progress_callback:
+                    try:
+                        batch_progress_callback(index, total)
+                    except Exception:
+                        pass
                 break
             except Exception as e:
                 msg = str(e).lower()
@@ -1000,32 +1013,49 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     total_records = len(people_rows) + len(org_rows) + len(event_rows) + len(payment_rows) + len(grant_rows)
     synced_records = 0
 
+    def _upsert_with_progress(table_name, rows, start_pct, end_pct, label):
+        if not rows:
+            return 0
+
+        def _on_batch(done, total):
+            if total <= 0:
+                frac = 1.0
+            else:
+                frac = max(0.0, min(1.0, done / total))
+            pct = start_pct + int((end_pct - start_pct) * frac)
+            overall_synced = synced_records + done
+            _report(pct, f"Upserting {label}... {overall_synced} out of {total_records} records synced.")
+
+        _upsert_in_batches(
+            admin_client,
+            table_name,
+            rows,
+            on_conflict="id",
+            batch_progress_callback=_on_batch,
+        )
+        return len(rows)
+
     upsert_started = time.time()
     _report(68, f"Preparing import: {synced_records} out of {total_records} records synced.")
     _report(72, f"Upserting people ({len(people_rows)}) and organisations ({len(org_rows)})...")
     if people_rows:
-        _upsert_in_batches(admin_client, "beacon_people", people_rows, on_conflict="id")
-        synced_records += len(people_rows)
+        synced_records += _upsert_with_progress("beacon_people", people_rows, 72, 76, "people")
         _report(76, f"People upserted: {synced_records} out of {total_records} records synced.")
     if org_rows:
-        _upsert_in_batches(admin_client, "beacon_organisations", org_rows, on_conflict="id")
-        synced_records += len(org_rows)
+        synced_records += _upsert_with_progress("beacon_organisations", org_rows, 76, 80, "organisations")
         _report(80, f"Organisations upserted: {synced_records} out of {total_records} records synced.")
 
     _report(84, f"Upserting events ({len(event_rows)}) and payments ({len(payment_rows)})...")
     if event_rows:
-        _upsert_in_batches(admin_client, "beacon_events", event_rows, on_conflict="id")
-        synced_records += len(event_rows)
+        synced_records += _upsert_with_progress("beacon_events", event_rows, 84, 88, "events")
         _report(88, f"Events upserted: {synced_records} out of {total_records} records synced.")
     if payment_rows:
-        _upsert_in_batches(admin_client, "beacon_payments", payment_rows, on_conflict="id")
-        synced_records += len(payment_rows)
+        synced_records += _upsert_with_progress("beacon_payments", payment_rows, 88, 92, "payments")
         _report(92, f"Payments upserted: {synced_records} out of {total_records} records synced.")
 
     _report(94, f"Upserting grants ({len(grant_rows)})...")
     if grant_rows:
-        _upsert_in_batches(admin_client, "beacon_grants", grant_rows, on_conflict="id")
-        synced_records += len(grant_rows)
+        synced_records += _upsert_with_progress("beacon_grants", grant_rows, 94, 97, "grants")
         _report(97, f"Grants upserted: {synced_records} out of {total_records} records synced.")
     upsert_duration_ms = int((time.time() - upsert_started) * 1000)
 
