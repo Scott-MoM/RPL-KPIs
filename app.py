@@ -3193,10 +3193,12 @@ def custom_reports_dashboard():
         return
 
     st.sidebar.markdown("### Report Filters")
-    dataset_key = st.sidebar.selectbox(
-        "Dataset",
-        ["People", "Organisations", "Events", "Payments", "Grants"],
-        key="reports_dataset"
+    dataset_choices = ["People", "Organisations", "Events", "Payments", "Grants"]
+    selected_datasets = st.sidebar.multiselect(
+        "Datasets",
+        dataset_choices,
+        default=["Events", "Payments"],
+        key="reports_datasets"
     )
     report_type = st.sidebar.selectbox(
         "Output Type",
@@ -3219,7 +3221,14 @@ def custom_reports_dashboard():
     st.sidebar.caption(f"Region: {region_val}")
 
     timeframe, start_date, end_date = get_time_filters()
-    df = fetch_custom_report_data(dataset_key, start_date=start_date, end_date=end_date)
+    if not selected_datasets:
+        st.warning("Select at least one dataset.")
+        return
+
+    frames = []
+    for ds in selected_datasets:
+        frames.append(fetch_custom_report_data(ds, start_date=start_date, end_date=end_date))
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if df.empty:
         st.warning("No report data found for the selected filters.")
         return
@@ -3231,11 +3240,11 @@ def custom_reports_dashboard():
         return
 
     df = df.copy()
-    st.caption(f"Rows: {len(df)} | Dataset: {dataset_key} | Timeframe: {timeframe}")
+    st.caption(f"Rows: {len(df)} | Datasets: {', '.join(selected_datasets)} | Timeframe: {timeframe}")
     st.download_button(
         "Download Report CSV",
         data=df.to_csv(index=False).encode("utf-8"),
-        file_name=f"{dataset_key.lower()}_custom_report.csv",
+        file_name=f"{'_'.join([d.lower().replace(' ', '-') for d in selected_datasets])}_custom_report.csv",
         mime="text/csv",
     )
 
@@ -3264,10 +3273,10 @@ def custom_reports_dashboard():
     grouped = grouped.sort_values("value", ascending=False)
 
     if report_type == "Bar":
-        fig = px.bar(grouped, x=agg_col, y="value", title=f"{dataset_key}: {agg_mode} of {metric_col} by {agg_col}")
+        fig = px.bar(grouped, x=agg_col, y="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
         st.plotly_chart(fig, use_container_width=True)
     elif report_type == "Pie":
-        fig = px.pie(grouped, names=agg_col, values="value", title=f"{dataset_key}: {agg_mode} of {metric_col}")
+        fig = px.pie(grouped, names=agg_col, values="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col}")
         st.plotly_chart(fig, use_container_width=True)
     elif report_type == "Line":
         line_df = df.copy()
@@ -3283,7 +3292,7 @@ def custom_reports_dashboard():
             trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
         else:
             trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
-        fig = px.line(trend, x="date", y="value", markers=True, title=f"{dataset_key}: {freq} trend")
+        fig = px.line(trend, x="date", y="value", markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
         st.plotly_chart(fig, use_container_width=True)
     elif report_type == "UK Map":
         region_map = grouped[grouped[agg_col].notna()].copy()
@@ -3308,7 +3317,7 @@ def custom_reports_dashboard():
             color="region",
             hover_name="region",
             hover_data={"value": True, "lat": False, "lon": False},
-            title=f"{dataset_key}: UK regional distribution",
+            title=f"{', '.join(selected_datasets)}: UK regional distribution",
         )
         fig.update_geos(scope="europe", projection_type="natural earth", center={"lat": 54.0, "lon": -2.0}, lataxis_range=[49, 60], lonaxis_range=[-8, 3])
         st.plotly_chart(fig, use_container_width=True)
