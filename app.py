@@ -510,6 +510,31 @@ def _read_uploaded_csv(uploaded_file):
     df = df.where(pd.notnull(df), None)
     return df.to_dict(orient="records")
 
+def _upsert_in_batches(admin_client, table, rows, on_conflict="id", default_chunk_size=200, min_chunk_size=25):
+    if not rows:
+        return 0
+    total = len(rows)
+    index = 0
+    while index < total:
+        chunk_size = min(default_chunk_size, total - index)
+        while True:
+            chunk = rows[index:index + chunk_size]
+            try:
+                admin_client.table(table).upsert(chunk, on_conflict=on_conflict).execute()
+                index += len(chunk)
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                is_timeout = "statement timeout" in msg or "57014" in msg
+                if is_timeout and chunk_size > min_chunk_size:
+                    chunk_size = max(min_chunk_size, chunk_size // 2)
+                    time.sleep(1)
+                    continue
+                if is_timeout:
+                    time.sleep(2)
+                raise
+    return total
+
 def import_beacon_uploads(admin_client, uploads):
     now_iso = datetime.utcnow().isoformat() + "Z"
 
@@ -581,15 +606,15 @@ def import_beacon_uploads(admin_client, uploads):
     grant_rows = list(grant_seen.values())
 
     if people_rows:
-        admin_client.table("beacon_people").upsert(people_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_people", people_rows, on_conflict="id")
     if org_rows:
-        admin_client.table("beacon_organisations").upsert(org_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_organisations", org_rows, on_conflict="id")
     if event_rows:
-        admin_client.table("beacon_events").upsert(event_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_events", event_rows, on_conflict="id")
     if payment_rows:
-        admin_client.table("beacon_payments").upsert(payment_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_payments", payment_rows, on_conflict="id")
     if grant_rows:
-        admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_grants", grant_rows, on_conflict="id")
 
     return {
         "people": len(people_rows),
@@ -955,27 +980,27 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     _report(68, f"Preparing import: {synced_records} out of {total_records} records synced.")
     _report(72, f"Upserting people ({len(people_rows)}) and organisations ({len(org_rows)})...")
     if people_rows:
-        admin_client.table("beacon_people").upsert(people_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_people", people_rows, on_conflict="id")
         synced_records += len(people_rows)
         _report(76, f"People upserted: {synced_records} out of {total_records} records synced.")
     if org_rows:
-        admin_client.table("beacon_organisations").upsert(org_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_organisations", org_rows, on_conflict="id")
         synced_records += len(org_rows)
         _report(80, f"Organisations upserted: {synced_records} out of {total_records} records synced.")
 
     _report(84, f"Upserting events ({len(event_rows)}) and payments ({len(payment_rows)})...")
     if event_rows:
-        admin_client.table("beacon_events").upsert(event_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_events", event_rows, on_conflict="id")
         synced_records += len(event_rows)
         _report(88, f"Events upserted: {synced_records} out of {total_records} records synced.")
     if payment_rows:
-        admin_client.table("beacon_payments").upsert(payment_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_payments", payment_rows, on_conflict="id")
         synced_records += len(payment_rows)
         _report(92, f"Payments upserted: {synced_records} out of {total_records} records synced.")
 
     _report(94, f"Upserting grants ({len(grant_rows)})...")
     if grant_rows:
-        admin_client.table("beacon_grants").upsert(grant_rows, on_conflict="id").execute()
+        _upsert_in_batches(admin_client, "beacon_grants", grant_rows, on_conflict="id")
         synced_records += len(grant_rows)
         _report(97, f"Grants upserted: {synced_records} out of {total_records} records synced.")
     upsert_duration_ms = int((time.time() - upsert_started) * 1000)
@@ -2951,6 +2976,358 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
         else:
             st.write("No case studies found.")
     st.markdown("</div>", unsafe_allow_html=True)
+
+def _normalize_email_list(values):
+    if not values:
+        return []
+    out = []
+    seen = set()
+    for v in values:
+        e = str(v).strip().lower()
+        if not e or e in seen:
+            continue
+        seen.add(e)
+        out.append(e)
+    return out
+
+def save_custom_report(report_name, config, shared_with):
+    report_id = uuid.uuid4().hex[:12]
+    details = {
+        "source": "custom_reports",
+        "report_id": report_id,
+        "report_name": (report_name or "").strip() or "Untitled Report",
+        "owner_email": st.session_state.get("email", "").strip().lower(),
+        "shared_with": _normalize_email_list(shared_with),
+        "config": config or {},
+    }
+    log_audit_event("Custom Report Saved", details)
+    get_accessible_custom_reports.clear()
+    return report_id
+
+def update_custom_report_sharing(report_id, report_name, shared_with):
+    details = {
+        "source": "custom_reports",
+        "report_id": report_id,
+        "report_name": report_name,
+        "owner_email": st.session_state.get("email", "").strip().lower(),
+        "shared_with": _normalize_email_list(shared_with),
+    }
+    log_audit_event("Custom Report Share Updated", details)
+    get_accessible_custom_reports.clear()
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_accessible_custom_reports(user_email):
+    if DB_TYPE != 'supabase':
+        return []
+    email = (user_email or "").strip().lower()
+    if not email:
+        return []
+    try:
+        resp = (
+            DB_CLIENT.table("audit_logs")
+            .select("created_at, action, details")
+            .in_("action", ["Custom Report Saved", "Custom Report Share Updated"])
+            .order("created_at", desc=False)
+            .limit(1000)
+            .execute()
+        )
+        rows = resp.data or []
+    except Exception:
+        return []
+
+    reports = {}
+    for row in rows:
+        details = row.get("details") or {}
+        if details.get("source") != "custom_reports":
+            continue
+        report_id = details.get("report_id")
+        if not report_id:
+            continue
+        rep = reports.get(report_id, {})
+        rep["report_id"] = report_id
+        rep["name"] = details.get("report_name") or rep.get("name") or "Untitled Report"
+        rep["owner_email"] = str(details.get("owner_email") or rep.get("owner_email") or "").strip().lower()
+        rep["shared_with"] = _normalize_email_list(details.get("shared_with") or rep.get("shared_with") or [])
+        if row.get("action") == "Custom Report Saved":
+            rep["config"] = details.get("config") or rep.get("config") or {}
+            if not rep.get("created_at"):
+                rep["created_at"] = row.get("created_at")
+        rep["updated_at"] = row.get("created_at")
+        reports[report_id] = rep
+
+    accessible = []
+    for rep in reports.values():
+        if rep.get("owner_email") == email or email in rep.get("shared_with", []):
+            accessible.append(rep)
+    accessible.sort(key=lambda x: str(x.get("updated_at") or ""), reverse=True)
+    return accessible
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_custom_report_data(dataset_key, start_date=None, end_date=None):
+    if DB_TYPE != 'supabase':
+        return pd.DataFrame()
+
+    config = {
+        "People": {"table": "beacon_people", "date_col": "created_at", "select_cols": "payload, created_at"},
+        "Organisations": {"table": "beacon_organisations", "date_col": "created_at", "select_cols": "payload, created_at"},
+        "Events": {"table": "beacon_events", "date_col": "start_date", "select_cols": "payload, start_date, region"},
+        "Payments": {"table": "beacon_payments", "date_col": "payment_date", "select_cols": "payload, payment_date"},
+        "Grants": {"table": "beacon_grants", "date_col": "close_date", "select_cols": "payload, close_date"},
+    }
+    cfg = config.get(dataset_key)
+    if not cfg:
+        return pd.DataFrame()
+
+    rows = []
+    offset = 0
+    batch_size = 1000
+    while True:
+        q = DB_CLIENT.table(cfg["table"]).select(cfg["select_cols"]).range(offset, offset + batch_size - 1)
+        if start_date:
+            q = q.gte(cfg["date_col"], start_date.isoformat())
+        if end_date:
+            q = q.lte(cfg["date_col"], end_date.isoformat())
+        chunk = q.execute().data or []
+        rows.extend(chunk)
+        if len(chunk) < batch_size:
+            break
+        offset += batch_size
+
+    flattened = []
+    for row in rows:
+        payload = row.get("payload") or {}
+        date_val = (
+            row.get(cfg["date_col"])
+            or payload.get(cfg["date_col"])
+            or payload.get("created_at")
+            or payload.get("date")
+        )
+        region_tags = _to_list(payload.get("c_region"))
+        region_name = (
+            (region_tags[0] if region_tags else None)
+            or row.get("region")
+            or payload.get("region")
+            or _get_row_value(payload, "Location (region)", "Location Region", "Region")
+            or "Other"
+        )
+
+        item = {
+            "dataset": dataset_key,
+            "record_id": payload.get("id") or row.get("id"),
+            "date": date_val,
+            "region": str(region_name).strip() if region_name else "Other",
+            "category": "",
+            "label": "",
+            "status": "",
+            "metric_value": 0.0,
+            "record_count": 1,
+        }
+
+        if dataset_key == "People":
+            types = _to_list(payload.get("type"))
+            item["category"] = ", ".join(types) if types else "Unknown"
+            item["label"] = str(
+                _get_row_value(payload, "name", "full_name", "Name", "Display Name", "email")
+                or payload.get("id")
+                or "Person"
+            )
+            item["metric_value"] = 1.0
+        elif dataset_key == "Organisations":
+            item["category"] = str(_get_row_value(payload, "type", "Organisation type", "Organization type", "Category") or "Unknown")
+            item["label"] = str(_get_row_value(payload, "name", "Organisation", "Organization", "Display Name") or payload.get("id") or "Organisation")
+            item["metric_value"] = 1.0
+        elif dataset_key == "Events":
+            item["category"] = str(_get_row_value(payload, "type", "Event type", "Activity type", "Category") or "Event")
+            item["label"] = str(_get_row_value(payload, "name", "title", "Event name", "Description") or payload.get("id") or "Event")
+            item["metric_value"] = float(
+                _get_row_value(
+                    payload,
+                    "number_of_attendees",
+                    "Number of attendees",
+                    "Attendees",
+                    "Participants",
+                    "Participant count",
+                ) or 0
+            )
+        elif dataset_key == "Payments":
+            item["category"] = str(_get_row_value(payload, "type", "Payment type", "Category") or "Payment")
+            item["label"] = str(_get_row_value(payload, "description", "Name", "Payment", "Reference") or payload.get("id") or "Payment")
+            item["status"] = str(_get_row_value(payload, "status", "payment_status", "Payment Status") or "")
+            item["metric_value"] = _coerce_money(_get_row_value(payload, "amount", "value", "total", "Amount", "Value"))
+        elif dataset_key == "Grants":
+            item["category"] = str(_get_row_value(payload, "type", "Category", "Grant type") or "Grant")
+            item["label"] = str(_get_row_value(payload, "name", "title", "Grant", "Description") or payload.get("id") or "Grant")
+            item["status"] = str(_get_row_value(payload, "stage", "status", "Stage", "Status") or "")
+            item["metric_value"] = _coerce_money(_get_row_value(payload, "amount", "amount_granted", "value", "Amount", "Value"))
+
+        flattened.append(item)
+
+    df = pd.DataFrame(flattened)
+    if df.empty:
+        return df
+    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+    df["metric_value"] = pd.to_numeric(df["metric_value"], errors="coerce").fillna(0.0)
+    df["month"] = df["date"].dt.to_period("M").astype(str)
+    return df
+
+def custom_reports_dashboard():
+    st.title("Custom Reports Dashboard")
+    st.caption("Build custom reports with table, pie, bar, line, UK map, and comparison analysis outputs.")
+
+    if DB_TYPE != 'supabase':
+        st.info("Custom reports are available only in Supabase mode.")
+        return
+
+    st.sidebar.markdown("### Report Filters")
+    dataset_key = st.sidebar.selectbox(
+        "Dataset",
+        ["People", "Organisations", "Events", "Payments", "Grants"],
+        key="reports_dataset"
+    )
+    report_type = st.sidebar.selectbox(
+        "Output Type",
+        ["Tabular", "Bar", "Line", "Pie", "UK Map", "Comparison Analysis"],
+        key="reports_output_type"
+    )
+
+    role = st.session_state.get('role')
+    default_region = st.session_state.get('region') or "Global"
+    if role in ["Admin", "Manager", "RPL"]:
+        all_regions = st.sidebar.checkbox("All Regions", value=True, key="reports_all_regions")
+        if all_regions:
+            region_val = "Global"
+        else:
+            region_options = ["North of England", "South of England", "Midlands", "Wales", "Other"]
+            idx = region_options.index(default_region) if default_region in region_options else 0
+            region_val = st.sidebar.selectbox("Region", region_options, index=idx, key="reports_region")
+    else:
+        region_val = default_region
+    st.sidebar.caption(f"Region: {region_val}")
+
+    timeframe, start_date, end_date = get_time_filters()
+    df = fetch_custom_report_data(dataset_key, start_date=start_date, end_date=end_date)
+    if df.empty:
+        st.warning("No report data found for the selected filters.")
+        return
+
+    if region_val != "Global":
+        df = df[df["region"].astype(str).str.lower().str.contains(region_val.lower(), na=False)]
+    if df.empty:
+        st.warning("No records found for the selected region/date filters.")
+        return
+
+    df = df.copy()
+    st.caption(f"Rows: {len(df)} | Dataset: {dataset_key} | Timeframe: {timeframe}")
+    st.download_button(
+        "Download Report CSV",
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name=f"{dataset_key.lower()}_custom_report.csv",
+        mime="text/csv",
+    )
+
+    numeric_cols = [c for c in ["record_count", "metric_value"] if c in df.columns]
+    candidate_dims = [c for c in ["region", "category", "status", "month", "label"] if c in df.columns]
+    dims = [c for c in candidate_dims if df[c].astype(str).nunique() > 1]
+    if not dims:
+        dims = ["region"]
+
+    if report_type == "Tabular":
+        default_cols = [c for c in ["date", "region", "category", "status", "label", "metric_value"] if c in df.columns]
+        cols = st.multiselect("Columns", df.columns.tolist(), default=default_cols, key="reports_table_cols")
+        st.dataframe(df[cols] if cols else df, use_container_width=True, hide_index=True)
+        return
+
+    agg_col = st.selectbox("Group By", dims, key="reports_group_col")
+    metric_col = st.selectbox("Metric", numeric_cols, key="reports_metric_col")
+    agg_mode = st.selectbox("Aggregation", ["sum", "count", "mean"], key="reports_agg_mode")
+
+    if agg_mode == "count":
+        grouped = df.groupby(agg_col, as_index=False).size().rename(columns={"size": "value"})
+    elif agg_mode == "mean":
+        grouped = df.groupby(agg_col, as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
+    else:
+        grouped = df.groupby(agg_col, as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
+    grouped = grouped.sort_values("value", ascending=False)
+
+    if report_type == "Bar":
+        fig = px.bar(grouped, x=agg_col, y="value", title=f"{dataset_key}: {agg_mode} of {metric_col} by {agg_col}")
+        st.plotly_chart(fig, use_container_width=True)
+    elif report_type == "Pie":
+        fig = px.pie(grouped, names=agg_col, values="value", title=f"{dataset_key}: {agg_mode} of {metric_col}")
+        st.plotly_chart(fig, use_container_width=True)
+    elif report_type == "Line":
+        line_df = df.copy()
+        if line_df["date"].isna().all():
+            st.warning("No date values available for line output in this dataset.")
+            return
+        freq = st.selectbox("Line Interval", ["Daily", "Weekly", "Monthly"], key="reports_line_freq")
+        freq_code = {"Daily": "D", "Weekly": "W-MON", "Monthly": "M"}[freq]
+        line_df = line_df.dropna(subset=["date"])
+        if agg_mode == "count":
+            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False).size().rename(columns={"size": "value"})
+        elif agg_mode == "mean":
+            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
+        else:
+            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
+        fig = px.line(trend, x="date", y="value", markers=True, title=f"{dataset_key}: {freq} trend")
+        st.plotly_chart(fig, use_container_width=True)
+    elif report_type == "UK Map":
+        region_map = grouped[grouped[agg_col].notna()].copy()
+        if agg_col != "region":
+            region_map = df.groupby("region", as_index=False)["metric_value"].sum().rename(columns={"metric_value": "value"})
+        coords = {
+            "north of england": (54.8, -2.2),
+            "south of england": (51.4, -0.5),
+            "midlands": (52.6, -1.7),
+            "wales": (52.5, -3.7),
+            "other": (53.5, -1.2),
+            "global": (54.2, -2.5),
+        }
+        region_map["key"] = region_map["region"].astype(str).str.lower()
+        region_map["lat"] = region_map["key"].map(lambda k: coords.get(k, (53.5, -1.2))[0])
+        region_map["lon"] = region_map["key"].map(lambda k: coords.get(k, (53.5, -1.2))[1])
+        fig = px.scatter_geo(
+            region_map,
+            lat="lat",
+            lon="lon",
+            size="value",
+            color="region",
+            hover_name="region",
+            hover_data={"value": True, "lat": False, "lon": False},
+            title=f"{dataset_key}: UK regional distribution",
+        )
+        fig.update_geos(scope="europe", projection_type="natural earth", center={"lat": 54.0, "lon": -2.0}, lataxis_range=[49, 60], lonaxis_range=[-8, 3])
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        compare_dim = st.selectbox("Compare By", dims, key="reports_compare_dim")
+        compare_vals = sorted(df[compare_dim].dropna().astype(str).unique().tolist())
+        if len(compare_vals) < 2:
+            st.warning("Not enough distinct values to run comparison analysis.")
+            return
+        base_val = st.selectbox("Baseline", compare_vals, index=0, key="reports_compare_base")
+        alt_default = 1 if len(compare_vals) > 1 else 0
+        alt_val = st.selectbox("Compare Against", compare_vals, index=alt_default, key="reports_compare_alt")
+        base = df[df[compare_dim].astype(str) == str(base_val)]
+        alt = df[df[compare_dim].astype(str) == str(alt_val)]
+
+        base_total = float(base[metric_col].sum()) if metric_col in base.columns else float(len(base))
+        alt_total = float(alt[metric_col].sum()) if metric_col in alt.columns else float(len(alt))
+        delta = alt_total - base_total
+        pct = (delta / base_total * 100.0) if base_total else None
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"{base_val}", f"{base_total:,.2f}")
+        c2.metric(f"{alt_val}", f"{alt_total:,.2f}")
+        c3.metric("Delta", f"{delta:,.2f}", f"{pct:.1f}%" if pct is not None else "n/a")
+
+        comp_df = pd.DataFrame(
+            [
+                {"group": str(base_val), "value": base_total, "rows": len(base)},
+                {"group": str(alt_val), "value": alt_total, "rows": len(alt)},
+            ]
+        )
+        fig = px.bar(comp_df, x="group", y="value", text="rows", title=f"Comparison: {base_val} vs {alt_val}")
+        st.plotly_chart(fig, use_container_width=True)
 
 # --- MAIN APP FLOW ---
 def main():
