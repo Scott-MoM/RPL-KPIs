@@ -2538,7 +2538,12 @@ def admin_dashboard():
                     action_filter = col_filter.selectbox("Filter by Action", action_options)
                     if action_filter != "All":
                         df_log = df_log[df_log["action"] == action_filter]
-                    
+                    col_dedup, col_progress = st.columns(2)
+                    dedup_rows = col_dedup.checkbox("Hide duplicate rows", value=True, key="audit_hide_dupes")
+                    show_progress_logs = col_progress.checkbox("Show progress logs", value=False, key="audit_show_progress")
+                    if not show_progress_logs:
+                        df_log = df_log[df_log["action"] != "Data Sync Progress"]
+
                     # Convert timestamps to readable format
                     df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
                     
@@ -2551,6 +2556,12 @@ def admin_dashboard():
                             df_log['details'].astype(str).str.lower().str.contains(search_term)
                         )
                         df_log = df_log[mask]
+
+                    if dedup_rows and not df_log.empty:
+                        df_log = df_log.drop_duplicates(
+                            subset=["user_email", "action", "details", "region"],
+                            keep="first"
+                        )
 
                     st.dataframe(
                         df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
