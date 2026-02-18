@@ -3240,6 +3240,49 @@ def custom_reports_dashboard():
         return
 
     df = df.copy()
+    with st.sidebar.expander("Advanced Report Controls", expanded=False):
+        dataset_filter = st.multiselect(
+            "Limit to datasets",
+            sorted(df["dataset"].dropna().astype(str).unique().tolist()),
+            default=[],
+            key="reports_dataset_filter"
+        )
+        category_filter = st.multiselect(
+            "Category filter",
+            sorted([v for v in df["category"].dropna().astype(str).unique().tolist() if v and v != "nan"])[:200],
+            default=[],
+            key="reports_category_filter"
+        )
+        status_filter = st.multiselect(
+            "Status filter",
+            sorted([v for v in df["status"].dropna().astype(str).unique().tolist() if v and v != "nan"])[:200],
+            default=[],
+            key="reports_status_filter"
+        )
+        min_value = float(df["metric_value"].min()) if not df.empty else 0.0
+        max_value = float(df["metric_value"].max()) if not df.empty else 0.0
+        value_range = st.slider(
+            "Metric value range",
+            min_value=min_value,
+            max_value=max_value if max_value >= min_value else min_value,
+            value=(min_value, max_value if max_value >= min_value else min_value),
+            key="reports_value_range"
+        )
+        require_date = st.checkbox("Only include rows with valid date", value=False, key="reports_require_date")
+
+    if dataset_filter:
+        df = df[df["dataset"].astype(str).isin(dataset_filter)]
+    if category_filter:
+        df = df[df["category"].astype(str).isin(category_filter)]
+    if status_filter:
+        df = df[df["status"].astype(str).isin(status_filter)]
+    df = df[(df["metric_value"] >= value_range[0]) & (df["metric_value"] <= value_range[1])]
+    if require_date:
+        df = df[df["date"].notna()]
+    if df.empty:
+        st.warning("No records left after advanced filters.")
+        return
+
     st.caption(f"Rows: {len(df)} | Datasets: {', '.join(selected_datasets)} | Timeframe: {timeframe}")
     st.download_button(
         "Download Report CSV",
@@ -3257,12 +3300,18 @@ def custom_reports_dashboard():
     if report_type == "Tabular":
         default_cols = [c for c in ["date", "region", "category", "status", "label", "metric_value"] if c in df.columns]
         cols = st.multiselect("Columns", df.columns.tolist(), default=default_cols, key="reports_table_cols")
-        st.dataframe(df[cols] if cols else df, use_container_width=True, hide_index=True)
+        table_df = df[cols] if cols else df
+        sort_col = st.selectbox("Sort table by", table_df.columns.tolist(), key="reports_table_sort_col")
+        sort_desc = st.checkbox("Sort descending", value=True, key="reports_table_sort_desc")
+        row_limit = st.number_input("Max rows", min_value=10, max_value=5000, value=500, step=10, key="reports_table_row_limit")
+        table_df = table_df.sort_values(sort_col, ascending=not sort_desc, na_position="last").head(int(row_limit))
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
         return
 
     agg_col = st.selectbox("Group By", dims, key="reports_group_col")
     metric_col = st.selectbox("Metric", numeric_cols, key="reports_metric_col")
     agg_mode = st.selectbox("Aggregation", ["sum", "count", "mean"], key="reports_agg_mode")
+    top_n = st.slider("Top N groups", min_value=3, max_value=100, value=20, key="reports_top_n")
 
     if agg_mode == "count":
         grouped = df.groupby(agg_col, as_index=False).size().rename(columns={"size": "value"})
@@ -3270,10 +3319,21 @@ def custom_reports_dashboard():
         grouped = df.groupby(agg_col, as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
     else:
         grouped = df.groupby(agg_col, as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
-    grouped = grouped.sort_values("value", ascending=False)
+    grouped = grouped.sort_values("value", ascending=False).head(int(top_n))
 
     if report_type == "Bar":
-        fig = px.bar(grouped, x=agg_col, y="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
+        color_dim_options = ["None"] + [d for d in dims if d != agg_col]
+        color_dim = st.selectbox("Bar color split", color_dim_options, key="reports_bar_color_dim")
+        if color_dim != "None":
+            if agg_mode == "count":
+                grouped_color = df.groupby([agg_col, color_dim], as_index=False).size().rename(columns={"size": "value"})
+            elif agg_mode == "mean":
+                grouped_color = df.groupby([agg_col, color_dim], as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
+            else:
+                grouped_color = df.groupby([agg_col, color_dim], as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
+            fig = px.bar(grouped_color, x=agg_col, y="value", color=color_dim, barmode="group", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
+        else:
+            fig = px.bar(grouped, x=agg_col, y="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
         st.plotly_chart(fig, use_container_width=True)
     elif report_type == "Pie":
         fig = px.pie(grouped, names=agg_col, values="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col}")
@@ -3286,13 +3346,22 @@ def custom_reports_dashboard():
         freq = st.selectbox("Line Interval", ["Daily", "Weekly", "Monthly"], key="reports_line_freq")
         freq_code = {"Daily": "D", "Weekly": "W-MON", "Monthly": "M"}[freq]
         line_df = line_df.dropna(subset=["date"])
-        if agg_mode == "count":
-            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False).size().rename(columns={"size": "value"})
-        elif agg_mode == "mean":
-            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
+        split_options = ["None"] + dims
+        line_split = st.selectbox("Line split", split_options, key="reports_line_split")
+        if line_split != "None":
+            group_cols = [pd.Grouper(key="date", freq=freq_code), line_split]
         else:
-            trend = line_df.groupby(pd.Grouper(key="date", freq=freq_code), as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
-        fig = px.line(trend, x="date", y="value", markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
+            group_cols = [pd.Grouper(key="date", freq=freq_code)]
+        if agg_mode == "count":
+            trend = line_df.groupby(group_cols, as_index=False).size().rename(columns={"size": "value"})
+        elif agg_mode == "mean":
+            trend = line_df.groupby(group_cols, as_index=False)[metric_col].mean().rename(columns={metric_col: "value"})
+        else:
+            trend = line_df.groupby(group_cols, as_index=False)[metric_col].sum().rename(columns={metric_col: "value"})
+        if line_split != "None":
+            fig = px.line(trend, x="date", y="value", color=line_split, markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
+        else:
+            fig = px.line(trend, x="date", y="value", markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
         st.plotly_chart(fig, use_container_width=True)
     elif report_type == "UK Map":
         region_map = grouped[grouped[agg_col].notna()].copy()
