@@ -3400,8 +3400,10 @@ def main():
             )
             
         role = st.session_state.get('role')
+        current_view = None
         if role == 'Admin':
             view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Case Studies"])
+            current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "Admin Dashboard":
                 admin_dashboard()
@@ -3412,6 +3414,7 @@ def main():
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Manager':
             view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Case Studies"])
+            current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
@@ -3420,6 +3423,7 @@ def main():
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         else:
             view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Case Studies"])
+            current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
@@ -3427,7 +3431,7 @@ def main():
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
 
-        if sync_running:
+        if sync_running and role == "Admin" and current_view == "Admin Dashboard":
             time.sleep(1)
             st.rerun()
 
