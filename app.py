@@ -474,7 +474,16 @@ def _coerce_money(value):
         return 0.0
 
 def render_plot_with_export(fig, export_name, key_prefix):
-    st.plotly_chart(fig, use_container_width=True)
+    plot_config = {
+        "displayModeBar": True,
+        "toImageButtonOptions": {
+            "format": "png",
+            "filename": export_name,
+            "scale": 2,
+        },
+        "displaylogo": False,
+    }
+    st.plotly_chart(fig, use_container_width=True, config=plot_config)
     try:
         img_bytes = pio.to_image(fig, format="png", width=1400, height=900, scale=2)
         st.download_button(
@@ -485,7 +494,7 @@ def render_plot_with_export(fig, export_name, key_prefix):
             key=f"{key_prefix}_png_download",
         )
     except Exception:
-        st.caption("PNG export unavailable (install `kaleido` in dependencies to enable server-side image export).")
+        st.caption("Use the camera icon on the chart to download PNG.")
 
 def _norm_key(value):
     if value is None:
