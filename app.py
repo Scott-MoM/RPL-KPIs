@@ -1700,6 +1700,106 @@ def _insert_system_audit(admin_client, action, details, user_email="System", reg
     except Exception as e:
         print(f"Audit Log Error: {e}")
 
+def _log_manual_sync_progress(admin_client, user_email, region, job_id, progress, message):
+    _insert_system_audit(
+        admin_client,
+        "Data Sync Progress",
+        {
+            "source": "beacon_api",
+            "trigger": "manual_ui",
+            "job_id": job_id,
+            "progress": int(max(0, min(100, progress))),
+            "message": message,
+        },
+        user_email=user_email,
+        region=region,
+    )
+
+def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
+    if DB_TYPE != 'supabase':
+        return None
+    try:
+        resp = (
+            DB_CLIENT.table("audit_logs")
+            .select("created_at, user_email, action, details, region")
+            .in_("action", ["Data Sync Started", "Data Sync Progress", "Data Sync Completed", "Data Sync Failed"])
+            .order("created_at", desc=True)
+            .limit(lookback_rows)
+            .execute()
+        )
+        rows = resp.data or []
+    except Exception:
+        return None
+
+    filtered = []
+    for r in rows:
+        details = r.get("details") or {}
+        if details.get("source") != "beacon_api" or details.get("trigger") != "manual_ui":
+            continue
+        if user_email and r.get("user_email") not in (user_email, "System"):
+            continue
+        if not details.get("job_id"):
+            continue
+        filtered.append(r)
+    if not filtered:
+        return None
+
+    latest = filtered[0]
+    latest_details = latest.get("details") or {}
+    job_id = latest_details.get("job_id")
+    job_rows = [r for r in filtered if (r.get("details") or {}).get("job_id") == job_id]
+    if not job_rows:
+        return None
+
+    start_row = next((r for r in reversed(job_rows) if r.get("action") == "Data Sync Started"), None)
+    end_row = next((r for r in job_rows if r.get("action") in ("Data Sync Completed", "Data Sync Failed")), None)
+    progress_row = next((r for r in job_rows if r.get("action") == "Data Sync Progress"), None)
+
+    status = "running"
+    if end_row:
+        status = "completed" if end_row.get("action") == "Data Sync Completed" else "failed"
+
+    if status in ("completed", "failed"):
+        progress = 100
+    elif progress_row:
+        progress = int((progress_row.get("details") or {}).get("progress") or 0)
+    else:
+        progress = 0
+
+    message = "Starting Beacon API sync..."
+    if progress_row:
+        message = (progress_row.get("details") or {}).get("message") or message
+    if status == "completed":
+        message = "Beacon API sync complete."
+    if status == "failed":
+        message = "Beacon API sync failed."
+
+    state = {
+        "job_id": job_id,
+        "status": status,
+        "progress": progress,
+        "message": message,
+        "user_email": latest.get("user_email"),
+        "region": latest.get("region"),
+    }
+
+    if start_row and start_row.get("created_at"):
+        ts = pd.to_datetime(start_row.get("created_at"), utc=True, errors="coerce")
+        if not pd.isna(ts):
+            state["started_at"] = ts.timestamp()
+    if end_row and end_row.get("created_at"):
+        ts = pd.to_datetime(end_row.get("created_at"), utc=True, errors="coerce")
+        if not pd.isna(ts):
+            state["ended_at"] = ts.timestamp()
+    if end_row:
+        details = end_row.get("details") or {}
+        if status == "completed":
+            state["result"] = details
+        else:
+            state["error"] = details.get("error")
+
+    return state
+
 def _run_manual_sync_job(job_id):
     state = _get_sync_job_state(job_id) or {}
     user_email = state.get("user_email", "System")
@@ -1725,15 +1825,27 @@ def _run_manual_sync_job(job_id):
         )
         return
 
-    _insert_system_audit(admin_client, "Data Sync Started", {"source": "beacon_api", "trigger": "manual_ui"}, user_email=user_email, region=region)
+    _insert_system_audit(
+        admin_client,
+        "Data Sync Started",
+        {"source": "beacon_api", "trigger": "manual_ui", "job_id": job_id},
+        user_email=user_email,
+        region=region,
+    )
 
+    last_logged_progress = {"value": -1}
     def _sync_job_progress(progress, message):
-        _set_sync_job_state(job_id, progress=int(max(0, min(100, progress))), message=message)
+        pct = int(max(0, min(100, progress)))
+        _set_sync_job_state(job_id, progress=pct, message=message)
+        if pct >= last_logged_progress["value"] + 5 or pct in (0, 100):
+            _log_manual_sync_progress(admin_client, user_email, region, job_id, pct, message)
+            last_logged_progress["value"] = pct
 
     try:
         result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_job_progress)
         result["source"] = "beacon_api"
         result["trigger"] = "manual_ui"
+        result["job_id"] = job_id
         _insert_system_audit(admin_client, "Data Sync Completed", result, user_email=user_email, region=region)
         _set_sync_job_state(
             job_id,
@@ -1747,7 +1859,7 @@ def _run_manual_sync_job(job_id):
         _insert_system_audit(
             admin_client,
             "Data Sync Failed",
-            {"source": "beacon_api", "trigger": "manual_ui", "error": str(e)},
+            {"source": "beacon_api", "trigger": "manual_ui", "job_id": job_id, "error": str(e)},
             user_email=user_email,
             region=region,
         )
@@ -1761,6 +1873,10 @@ def _run_manual_sync_job(job_id):
         )
 
 def start_manual_sync_job(user_email, region):
+    audit_state = get_latest_manual_sync_state(user_email=user_email)
+    if audit_state and audit_state.get("status") == "running":
+        return audit_state.get("job_id"), "A manual sync is already running. Showing its progress."
+
     with SYNC_JOBS_LOCK:
         for running_job_id, state in SYNC_JOBS.items():
             if state.get("status") == "running":
@@ -1786,7 +1902,11 @@ def render_manual_sync_status():
             st.session_state["manual_sync_job_id"] = recovered
             job_id = recovered
         else:
-            return None, False
+            audit_state = get_latest_manual_sync_state(st.session_state.get("email"))
+            if not audit_state:
+                return None, False
+            st.session_state["manual_sync_job_id"] = audit_state.get("job_id")
+            job_id = audit_state.get("job_id")
 
     state = _get_sync_job_state(job_id)
     if not state:
@@ -1794,6 +1914,13 @@ def render_manual_sync_status():
         if recovered and recovered != job_id:
             st.session_state["manual_sync_job_id"] = recovered
             state = _get_sync_job_state(recovered)
+        if not state:
+            audit_state = get_latest_manual_sync_state(st.session_state.get("email"))
+            if audit_state and audit_state.get("job_id") == job_id:
+                state = audit_state
+            elif audit_state:
+                st.session_state["manual_sync_job_id"] = audit_state.get("job_id")
+                state = audit_state
         if not state:
             return None, False
 
@@ -2266,6 +2393,10 @@ def admin_dashboard():
 
             active_job_id = st.session_state.get("manual_sync_job_id")
             active_state = _get_sync_job_state(active_job_id) if active_job_id else None
+            if not active_state:
+                active_state = get_latest_manual_sync_state(st.session_state.get("email"))
+                if active_state and active_state.get("job_id"):
+                    st.session_state["manual_sync_job_id"] = active_state.get("job_id")
             if active_state:
                 st.markdown("#### Active Sync")
                 render_manual_sync_main_panel(active_state)
