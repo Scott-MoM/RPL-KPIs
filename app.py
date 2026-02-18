@@ -263,6 +263,29 @@ def inject_global_styles():
             color: #ff9fb5;
             border-color: rgba(255, 61, 127, 0.5);
         }
+        .sync-toast {
+            padding: 10px 12px;
+            border-radius: 14px;
+            margin: 8px 0 10px 0;
+            font-weight: 600;
+            border: 1px solid rgba(255,255,255,0.2);
+            line-height: 1.35;
+        }
+        .sync-toast-running {
+            background: rgba(0, 245, 212, 0.14);
+            color: #c8fff4;
+            border-color: rgba(0, 245, 212, 0.45);
+        }
+        .sync-toast-complete {
+            background: rgba(123, 255, 107, 0.15);
+            color: #d8ffd0;
+            border-color: rgba(123, 255, 107, 0.5);
+        }
+        .sync-toast-failed {
+            background: rgba(255, 61, 127, 0.2);
+            color: #ffd2df;
+            border-color: rgba(255, 61, 127, 0.5);
+        }
 
         .neon-callout {
             padding: 10px 14px;
@@ -1759,6 +1782,15 @@ def render_manual_sync_status():
 
     st.sidebar.markdown("### Manual Sync Status")
     st.sidebar.progress(progress, text=message)
+    toast_class = "sync-toast-running"
+    if status == "completed":
+        toast_class = "sync-toast-complete"
+    elif status == "failed":
+        toast_class = "sync-toast-failed"
+    st.sidebar.markdown(
+        f"<div class='sync-toast {toast_class}'>Sync {status.title()} | {progress}%<br>{message}</div>",
+        unsafe_allow_html=True,
+    )
     if status == "running":
         st.sidebar.info(f"Status: Running ({progress}%)")
     elif status == "queued":
@@ -1783,16 +1815,8 @@ def render_manual_sync_status():
         if not st.session_state.get(cache_key):
             st.cache_data.clear()
             st.session_state[cache_key] = True
-        done_key = f"_manual_sync_done_toast_{job_id}"
-        if not st.session_state.get(done_key):
-            st.toast("Manual sync complete.", icon="✅")
-            st.session_state[done_key] = True
     if status == "failed" and state.get("error"):
         st.sidebar.caption(f"Error: {state.get('error')}")
-        fail_key = f"_manual_sync_fail_toast_{job_id}"
-        if not st.session_state.get(fail_key):
-            st.toast("Manual sync failed. See status in sidebar.", icon="⚠️")
-            st.session_state[fail_key] = True
 
     return status in ("queued", "running")
 
@@ -2800,5 +2824,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
