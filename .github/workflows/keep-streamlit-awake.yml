@@ -14,5 +14,22 @@ jobs:
     steps:
       - name: Ping Streamlit app
         run: |
-          curl -sS -L --max-time 60 --retry 2 --retry-delay 5 \
-            "https://momdashboard.streamlit.app/" > /dev/null
+          set -euo pipefail
+
+          BASE_URL="https://momdashboard.streamlit.app"
+          USER_AGENT="github-actions-keepalive/1.0"
+
+          for URL in "$BASE_URL/_stcore/health" "$BASE_URL/"; do
+            CODE="$(curl -A "$USER_AGENT" -sS -o /dev/null -w "%{http_code}" \
+              --max-time 60 --retry 2 --retry-delay 5 --max-redirs 10 "$URL" || true)"
+
+            if [[ "$CODE" =~ ^(200|204|301|302|307|308)$ ]]; then
+              echo "Ping OK for $URL (HTTP $CODE)"
+              exit 0
+            fi
+
+            echo "Ping attempt failed for $URL (HTTP $CODE)"
+          done
+
+          echo "All keep-awake ping attempts failed."
+          exit 1
