@@ -4,9 +4,12 @@ import json
 import os
 import requests
 import time
+import threading
+import uuid
 import plotly.express as px
 from passlib.hash import pbkdf2_sha256
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 # --- SUPABASE SETUP ---
 from supabase import create_client, Client
@@ -344,6 +347,9 @@ def get_db_connection():
     return 'local', None
 
 DB_TYPE, DB_CLIENT = get_db_connection()
+SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+SYNC_JOBS = {}
+SYNC_JOBS_LOCK = threading.Lock()
 
 def get_admin_client():
     if "supabase" not in st.secrets:
@@ -1632,6 +1638,164 @@ def get_last_refresh_timestamp():
     except Exception:
         return None
 
+def _set_sync_job_state(job_id, **updates):
+    with SYNC_JOBS_LOCK:
+        state = SYNC_JOBS.get(job_id) or {}
+        state.update(updates)
+        SYNC_JOBS[job_id] = state
+        return state
+
+def _get_sync_job_state(job_id):
+    with SYNC_JOBS_LOCK:
+        state = SYNC_JOBS.get(job_id)
+        return dict(state) if state else None
+
+def _insert_system_audit(admin_client, action, details, user_email="System", region="Global"):
+    try:
+        admin_client.table("audit_logs").insert({
+            "user_email": user_email or "System",
+            "action": action,
+            "details": details or {},
+            "region": region or "Global",
+        }).execute()
+    except Exception as e:
+        print(f"Audit Log Error: {e}")
+
+def _run_manual_sync_job(job_id):
+    state = _get_sync_job_state(job_id) or {}
+    user_email = state.get("user_email", "System")
+    region = state.get("region", "Global")
+    started_at = time.time()
+    _set_sync_job_state(
+        job_id,
+        status="running",
+        progress=0,
+        message="Starting Beacon API sync...",
+        started_at=started_at,
+    )
+
+    admin_client = get_admin_client()
+    if not admin_client:
+        _set_sync_job_state(
+            job_id,
+            status="failed",
+            progress=100,
+            message="Admin client not available.",
+            ended_at=time.time(),
+            error="Admin client not available.",
+        )
+        return
+
+    _insert_system_audit(admin_client, "Data Sync Started", {"source": "beacon_api", "trigger": "manual_ui"}, user_email=user_email, region=region)
+
+    def _sync_job_progress(progress, message):
+        _set_sync_job_state(job_id, progress=int(max(0, min(100, progress))), message=message)
+
+    try:
+        result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_job_progress)
+        result["source"] = "beacon_api"
+        result["trigger"] = "manual_ui"
+        _insert_system_audit(admin_client, "Data Sync Completed", result, user_email=user_email, region=region)
+        _set_sync_job_state(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Beacon API sync complete.",
+            ended_at=time.time(),
+            result=result,
+        )
+    except Exception as e:
+        _insert_system_audit(
+            admin_client,
+            "Data Sync Failed",
+            {"source": "beacon_api", "trigger": "manual_ui", "error": str(e)},
+            user_email=user_email,
+            region=region,
+        )
+        _set_sync_job_state(
+            job_id,
+            status="failed",
+            progress=100,
+            message="Beacon API sync failed.",
+            ended_at=time.time(),
+            error=str(e),
+        )
+
+def start_manual_sync_job(user_email, region):
+    with SYNC_JOBS_LOCK:
+        for state in SYNC_JOBS.values():
+            if state.get("status") == "running":
+                return None, "A manual sync is already running."
+        job_id = uuid.uuid4().hex[:10]
+        SYNC_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "Queued...",
+            "created_at": time.time(),
+            "user_email": user_email,
+            "region": region,
+        }
+    SYNC_EXECUTOR.submit(_run_manual_sync_job, job_id)
+    return job_id, None
+
+def render_manual_sync_status():
+    job_id = st.session_state.get("manual_sync_job_id")
+    if not job_id:
+        return False
+
+    state = _get_sync_job_state(job_id)
+    if not state:
+        return False
+
+    status = state.get("status", "unknown")
+    progress = int(state.get("progress", 0))
+    message = state.get("message", "Working...")
+    started_at = state.get("started_at")
+    ended_at = state.get("ended_at")
+    elapsed = None
+    if started_at:
+        elapsed = (ended_at or time.time()) - started_at
+
+    st.sidebar.markdown("### Manual Sync Status")
+    st.sidebar.progress(progress, text=message)
+    if status == "running":
+        st.sidebar.info(f"Status: Running ({progress}%)")
+    elif status == "queued":
+        st.sidebar.info("Status: Queued")
+    elif status == "completed":
+        st.sidebar.success("Status: Completed")
+    elif status == "failed":
+        st.sidebar.error("Status: Failed")
+    else:
+        st.sidebar.warning(f"Status: {status}")
+
+    if elapsed is not None:
+        st.sidebar.caption(f"Elapsed: {elapsed:.1f}s")
+
+    if status == "completed":
+        result = state.get("result") or {}
+        st.sidebar.caption(
+            f"Updated P:{result.get('people', 0)} O:{result.get('organisations', 0)} "
+            f"E:{result.get('events', 0)} Pay:{result.get('payments', 0)} G:{result.get('grants', 0)}"
+        )
+        cache_key = f"_manual_sync_cache_cleared_{job_id}"
+        if not st.session_state.get(cache_key):
+            st.cache_data.clear()
+            st.session_state[cache_key] = True
+        done_key = f"_manual_sync_done_toast_{job_id}"
+        if not st.session_state.get(done_key):
+            st.toast("Manual sync complete.", icon="✅")
+            st.session_state[done_key] = True
+    if status == "failed" and state.get("error"):
+        st.sidebar.caption(f"Error: {state.get('error')}")
+        fail_key = f"_manual_sync_fail_toast_{job_id}"
+        if not st.session_state.get(fail_key):
+            st.toast("Manual sync failed. See status in sidebar.", icon="⚠️")
+            st.session_state[fail_key] = True
+
+    return status in ("queued", "running")
+
 def clear_dashboard_data_except_users(admin_client, progress_callback=None):
     # Deliberately excludes user/auth tables (e.g. user_roles, roles, auth users).
     tables = [
@@ -1984,46 +2148,16 @@ def admin_dashboard():
                     st.error(f"Smoke test failed: {e}")
 
             if col_sync.button("Sync Beacon API to Database"):
-                sync_progress = st.progress(0, text="Starting Beacon API sync...")
-                sync_status = st.empty()
-                sync_elapsed = st.empty()
-                sync_started_at = time.time()
-                try:
-                    log_audit_event("Data Sync Started", {"source": "beacon_api"})
-
-                    def _sync_ui_progress(progress, message):
-                        pct = int(max(0, min(100, progress)))
-                        elapsed = time.time() - sync_started_at
-                        sync_progress.progress(pct, text=message)
-                        sync_status.info(f"Sync progress: {pct}%")
-                        sync_elapsed.caption(f"Elapsed: {elapsed:.1f}s")
-
-                    result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_ui_progress)
-                    log_audit_event("Data Sync Completed", {"source": "beacon_api", **result})
-                    sync_progress.progress(100, text="Beacon API sync complete.")
-                    sync_status.success("Sync complete.")
-                    sync_elapsed.caption(
-                        f"Total: {result.get('total_duration_ms', 0) / 1000:.1f}s | "
-                        f"Fetch: {result.get('fetch_duration_ms', 0) / 1000:.1f}s | "
-                        f"Transform: {result.get('transform_duration_ms', 0) / 1000:.1f}s | "
-                        f"Upsert: {result.get('upsert_duration_ms', 0) / 1000:.1f}s"
-                    )
-                    st.success(
-                        "API sync complete. "
-                        f"Updated: People {result.get('people', 0)}, "
-                        f"Organisations {result.get('organisations', 0)}, "
-                        f"Events {result.get('events', 0)}, "
-                        f"Payments {result.get('payments', 0)}, "
-                        f"Grants {result.get('grants', 0)}. "
-                        f"Synced at: {result.get('synced_at', 'n/a')}"
-                    )
-                    st.cache_data.clear()
-                except Exception as e:
-                    sync_progress.progress(100, text="Beacon API sync failed.")
-                    sync_status.error("Sync failed.")
-                    sync_elapsed.caption(f"Elapsed before failure: {time.time() - sync_started_at:.1f}s")
-                    log_audit_event("Data Sync Failed", {"source": "beacon_api", "error": str(e)})
-                    st.error(f"API sync failed: {e}")
+                job_id, err = start_manual_sync_job(
+                    st.session_state.get("email", "System"),
+                    st.session_state.get("region", "Global"),
+                )
+                if err:
+                    st.warning(err)
+                else:
+                    st.session_state["manual_sync_job_id"] = job_id
+                    st.success("Manual sync started in background. You can switch to KPI Dashboard while it runs.")
+                    st.rerun()
         else:
             st.info("Admin client not available. Check Supabase secrets.")
     else:
@@ -2606,6 +2740,7 @@ def main():
             f"(https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml/badge.svg?branch=main&t={badge_ts})"
             f"](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml)"
         )
+        sync_running = render_manual_sync_status()
 
         # Last Data Refresh card
         last_refresh = get_last_refresh_timestamp()
@@ -2658,6 +2793,10 @@ def main():
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
+
+        if sync_running:
+            time.sleep(1)
+            st.rerun()
 
 if __name__ == "__main__":
     main()
