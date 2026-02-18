@@ -2015,7 +2015,7 @@ def render_manual_sync_main_panel(sync_state):
     if started_at:
         elapsed = (ended_at or time.time()) - started_at
 
-    st.markdown("### Manual Sync Progress")
+    st.markdown("**Manual Sync Progress**")
     st.progress(progress, text=f"{progress}% | {message}")
     if status == "running":
         st.info("Sync is running in the background. You can keep using the dashboard.")
@@ -2423,8 +2423,8 @@ def admin_dashboard():
                 if active_state and active_state.get("job_id"):
                     st.session_state["manual_sync_job_id"] = active_state.get("job_id")
             if active_state:
-                st.markdown("#### Active Sync")
-                render_manual_sync_main_panel(active_state)
+                with st.expander("Active Sync Progress", expanded=True):
+                    render_manual_sync_main_panel(active_state)
         else:
             st.info("Admin client not available. Check Supabase secrets.")
     else:
@@ -3374,7 +3374,6 @@ def main():
             f"](https://github.com/Scott-MoM/RPL-KPIs/actions/workflows/nightly-beacon-sync.yml)"
         )
         sync_state, sync_running = render_manual_sync_status()
-        render_manual_sync_main_panel(sync_state)
 
         # Last Data Refresh card
         last_refresh = get_last_refresh_timestamp()
