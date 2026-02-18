@@ -2699,10 +2699,11 @@ def main_dashboard():
 
     show_debug = False
     if st.session_state.get("role") in ["Admin", "Manager", "RPL"]:
-        show_debug = st.sidebar.checkbox("Show KPI Debug", value=False)
+        show_debug = st.sidebar.checkbox("Show KPI Debug", value=False, key="kpi_show_debug")
     if show_debug:
         debug = data.get("_debug") or {}
-        st.subheader("KPI Debug Counts")
+        st.markdown("### KPI Debug Counts")
+        st.caption("Debug metrics are shown from the current filtered KPI dataset.")
         d1, d2, d3, d4 = st.columns(4)
         d1.metric("People in Region", debug.get("region_people", 0))
         d2.metric("Volunteers", debug.get("volunteers", 0))
