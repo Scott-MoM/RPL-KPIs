@@ -7,6 +7,7 @@ import time
 import threading
 import uuid
 import plotly.express as px
+import plotly.io as pio
 from passlib.hash import pbkdf2_sha256
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -471,6 +472,20 @@ def _coerce_money(value):
         return float(s)
     except Exception:
         return 0.0
+
+def render_plot_with_export(fig, export_name, key_prefix):
+    st.plotly_chart(fig, use_container_width=True)
+    try:
+        img_bytes = pio.to_image(fig, format="png", width=1400, height=900, scale=2)
+        st.download_button(
+            "Download chart as PNG",
+            data=img_bytes,
+            file_name=f"{export_name}.png",
+            mime="image/png",
+            key=f"{key_prefix}_png_download",
+        )
+    except Exception:
+        st.caption("PNG export unavailable (install `kaleido` in dependencies to enable server-side image export).")
 
 def _norm_key(value):
     if value is None:
@@ -3334,10 +3349,10 @@ def custom_reports_dashboard():
             fig = px.bar(grouped_color, x=agg_col, y="value", color=color_dim, barmode="group", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
         else:
             fig = px.bar(grouped, x=agg_col, y="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col} by {agg_col}")
-        st.plotly_chart(fig, use_container_width=True)
+        render_plot_with_export(fig, "custom-report-bar", "reports_bar")
     elif report_type == "Pie":
         fig = px.pie(grouped, names=agg_col, values="value", title=f"{', '.join(selected_datasets)}: {agg_mode} of {metric_col}")
-        st.plotly_chart(fig, use_container_width=True)
+        render_plot_with_export(fig, "custom-report-pie", "reports_pie")
     elif report_type == "Line":
         line_df = df.copy()
         if line_df["date"].isna().all():
@@ -3362,7 +3377,7 @@ def custom_reports_dashboard():
             fig = px.line(trend, x="date", y="value", color=line_split, markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
         else:
             fig = px.line(trend, x="date", y="value", markers=True, title=f"{', '.join(selected_datasets)}: {freq} trend")
-        st.plotly_chart(fig, use_container_width=True)
+        render_plot_with_export(fig, "custom-report-line", "reports_line")
     elif report_type == "UK Map":
         region_map = grouped[grouped[agg_col].notna()].copy()
         if agg_col != "region":
@@ -3389,7 +3404,7 @@ def custom_reports_dashboard():
             title=f"{', '.join(selected_datasets)}: UK regional distribution",
         )
         fig.update_geos(scope="europe", projection_type="natural earth", center={"lat": 54.0, "lon": -2.0}, lataxis_range=[49, 60], lonaxis_range=[-8, 3])
-        st.plotly_chart(fig, use_container_width=True)
+        render_plot_with_export(fig, "custom-report-uk-map", "reports_map")
     else:
         compare_dim = st.selectbox("Compare By", dims, key="reports_compare_dim")
         compare_vals = sorted(df[compare_dim].dropna().astype(str).unique().tolist())
@@ -3419,7 +3434,7 @@ def custom_reports_dashboard():
             ]
         )
         fig = px.bar(comp_df, x="group", y="value", text="rows", title=f"Comparison: {base_val} vs {alt_val}")
-        st.plotly_chart(fig, use_container_width=True)
+        render_plot_with_export(fig, "custom-report-comparison", "reports_compare")
 
 # --- MAIN APP FLOW ---
 def main():

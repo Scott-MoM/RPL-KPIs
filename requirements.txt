@@ -4,3 +4,4 @@ plotly
 passlib
 requests
 supabase
+kaleido
