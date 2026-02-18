@@ -1985,15 +1985,29 @@ def admin_dashboard():
 
             if col_sync.button("Sync Beacon API to Database"):
                 sync_progress = st.progress(0, text="Starting Beacon API sync...")
+                sync_status = st.empty()
+                sync_elapsed = st.empty()
+                sync_started_at = time.time()
                 try:
                     log_audit_event("Data Sync Started", {"source": "beacon_api"})
 
                     def _sync_ui_progress(progress, message):
-                        sync_progress.progress(int(max(0, min(100, progress))), text=message)
+                        pct = int(max(0, min(100, progress)))
+                        elapsed = time.time() - sync_started_at
+                        sync_progress.progress(pct, text=message)
+                        sync_status.info(f"Sync progress: {pct}%")
+                        sync_elapsed.caption(f"Elapsed: {elapsed:.1f}s")
 
                     result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_ui_progress)
                     log_audit_event("Data Sync Completed", {"source": "beacon_api", **result})
                     sync_progress.progress(100, text="Beacon API sync complete.")
+                    sync_status.success("Sync complete.")
+                    sync_elapsed.caption(
+                        f"Total: {result.get('total_duration_ms', 0) / 1000:.1f}s | "
+                        f"Fetch: {result.get('fetch_duration_ms', 0) / 1000:.1f}s | "
+                        f"Transform: {result.get('transform_duration_ms', 0) / 1000:.1f}s | "
+                        f"Upsert: {result.get('upsert_duration_ms', 0) / 1000:.1f}s"
+                    )
                     st.success(
                         "API sync complete. "
                         f"Updated: People {result.get('people', 0)}, "
@@ -2006,6 +2020,8 @@ def admin_dashboard():
                     st.cache_data.clear()
                 except Exception as e:
                     sync_progress.progress(100, text="Beacon API sync failed.")
+                    sync_status.error("Sync failed.")
+                    sync_elapsed.caption(f"Elapsed before failure: {time.time() - sync_started_at:.1f}s")
                     log_audit_event("Data Sync Failed", {"source": "beacon_api", "error": str(e)})
                     st.error(f"API sync failed: {e}")
         else:
