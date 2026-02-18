@@ -1673,6 +1673,22 @@ def _get_sync_job_state(job_id):
         state = SYNC_JOBS.get(job_id)
         return dict(state) if state else None
 
+def _find_recent_sync_job_id(user_email=None, max_age_seconds=7200):
+    now_ts = time.time()
+    with SYNC_JOBS_LOCK:
+        candidates = []
+        for job_id, state in SYNC_JOBS.items():
+            created_at = state.get("created_at") or state.get("started_at") or now_ts
+            if (now_ts - created_at) > max_age_seconds:
+                continue
+            if user_email and state.get("user_email") not in (user_email, "System"):
+                continue
+            candidates.append((created_at, job_id))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
 def _insert_system_audit(admin_client, action, details, user_email="System", region="Global"):
     try:
         admin_client.table("audit_logs").insert({
@@ -1746,9 +1762,9 @@ def _run_manual_sync_job(job_id):
 
 def start_manual_sync_job(user_email, region):
     with SYNC_JOBS_LOCK:
-        for state in SYNC_JOBS.values():
+        for running_job_id, state in SYNC_JOBS.items():
             if state.get("status") == "running":
-                return None, "A manual sync is already running."
+                return running_job_id, "A manual sync is already running. Showing its progress."
         job_id = uuid.uuid4().hex[:10]
         SYNC_JOBS[job_id] = {
             "job_id": job_id,
@@ -1765,11 +1781,21 @@ def start_manual_sync_job(user_email, region):
 def render_manual_sync_status():
     job_id = st.session_state.get("manual_sync_job_id")
     if not job_id:
-        return None, False
+        recovered = _find_recent_sync_job_id(st.session_state.get("email"))
+        if recovered:
+            st.session_state["manual_sync_job_id"] = recovered
+            job_id = recovered
+        else:
+            return None, False
 
     state = _get_sync_job_state(job_id)
     if not state:
-        return None, False
+        recovered = _find_recent_sync_job_id(st.session_state.get("email"))
+        if recovered and recovered != job_id:
+            st.session_state["manual_sync_job_id"] = recovered
+            state = _get_sync_job_state(recovered)
+        if not state:
+            return None, False
 
     status = state.get("status", "unknown")
     progress = int(state.get("progress", 0))
@@ -2230,10 +2256,11 @@ def admin_dashboard():
                     st.session_state.get("email", "System"),
                     st.session_state.get("region", "Global"),
                 )
-                if err:
-                    st.warning(err)
-                else:
+                if job_id:
                     st.session_state["manual_sync_job_id"] = job_id
+                if err:
+                    st.info(err)
+                else:
                     st.success("Manual sync started in background. You can switch to KPI Dashboard while it runs.")
                     st.rerun()
         else:
