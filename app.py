@@ -2527,6 +2527,11 @@ def admin_dashboard():
                 
                 if data:
                     df_log = pd.DataFrame(data)
+                    if "details" not in df_log.columns:
+                        df_log["details"] = ""
+                    df_log["details_norm"] = df_log["details"].apply(
+                        lambda d: json.dumps(d, sort_keys=True, default=str) if isinstance(d, (dict, list)) else str(d)
+                    )
 
                     # Search & Filter Controls
                     col_search, col_filter = st.columns([3, 1])
@@ -2539,6 +2544,7 @@ def admin_dashboard():
                     if action_filter != "All":
                         df_log = df_log[df_log["action"] == action_filter]
                     df_log = df_log[df_log["action"] != "Data Sync Progress"]
+                    df_log = df_log[~df_log["action"].isin(["Dashboard Filter Changed", "Dashboard View Changed"])]
 
                     # Convert timestamps to readable format
                     df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -2555,7 +2561,7 @@ def admin_dashboard():
 
                     if not df_log.empty:
                         df_log = df_log.drop_duplicates(
-                            subset=["user_email", "action", "details", "region"],
+                            subset=["user_email", "action", "details_norm", "region"],
                             keep="first"
                         )
 
