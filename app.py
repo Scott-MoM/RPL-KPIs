@@ -1447,6 +1447,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     lsp_counts = {}
     ldp_counts = {}
     corporate_count = 0
+    corporate_orgs = []
     
     for org in region_orgs:
         org_type = str(org.get('type') or "").strip()
@@ -1462,6 +1463,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         # Specific count for corporate
         if "business" in org_type.lower() or "corporate" in org_type.lower():
             corporate_count += 1
+            corporate_orgs.append(org)
 
     # 5. Process Income
     region_grants = []
@@ -1531,12 +1533,22 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     walks_delivered = 0
     participants = 0
     delivery_event_count = 0
+    delivery_events = []
     for e in region_events:
         e_type = _event_type(e)
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
             walks_delivered += 1
             delivery_event_count += 1
-            participants += _event_attendees(e)
+            event_participants = _event_attendees(e)
+            participants += event_participants
+            delivery_events.append({
+                "id": e.get("id"),
+                "type": e_type,
+                "participants": event_participants,
+                "date": e.get("start_date") or e.get("date") or e.get("created_at"),
+                "name": _get_row_value(e, "name", "title", "Event name", "Description") or e.get("id"),
+                "region": ", ".join(_to_list(e.get("c_region"))),
+            })
 
     # Fallback: if event labels are inconsistent, treat all region events as delivered.
     if walks_delivered == 0 and region_events:
@@ -1590,6 +1602,17 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         "_raw_income": {
             "payments": region_payments,
             "grants": region_grants
+        },
+        "_raw_kpi": {
+            "region_people": region_people,
+            "volunteers": volunteers,
+            "steering_volunteers": steering_volunteers,
+            "region_orgs": region_orgs,
+            "corporate_orgs": corporate_orgs,
+            "region_events": region_events,
+            "delivery_events": delivery_events,
+            "region_grants": region_grants,
+            "region_payments": region_payments,
         }
     }
 
@@ -2771,6 +2794,20 @@ def main_dashboard():
         e2.metric("Participants", debug.get("participants", 0))
         e3.metric("Grants in Region", debug.get("region_grants", 0))
         e4.metric("Bids Submitted", debug.get("bids_submitted", 0))
+
+    raw_kpi = data.get("_raw_kpi") or {}
+
+    def _rows_to_df(rows, field_map):
+        out = []
+        for r in rows or []:
+            row_out = {}
+            for out_col, getter in field_map.items():
+                try:
+                    row_out[out_col] = getter(r)
+                except Exception:
+                    row_out[out_col] = None
+            out.append(row_out)
+        return pd.DataFrame(out)
     
 
     # Tabs
@@ -2785,6 +2822,36 @@ def main_dashboard():
         c1.metric("Steering Group Active", "Yes" if data['governance']['steering_group_active'] else "No")
         c2.metric("Active Volunteers", data['governance']['steering_members'])
         c3.metric("New Volunteers", data['governance']['volunteers_new'])
+        with st.expander("Metric Drill-down"):
+            st.markdown("**Steering Group Active**")
+            steering_df = _rows_to_df(
+                raw_kpi.get("steering_volunteers") or [],
+                {
+                    "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                    "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                    "Created": lambda r: r.get("created_at"),
+                },
+            )
+            if steering_df.empty:
+                st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
+            else:
+                st.dataframe(steering_df, use_container_width=True, hide_index=True)
+            st.markdown("**Active Volunteers / New Volunteers**")
+            volunteers_df = _rows_to_df(
+                raw_kpi.get("volunteers") or [],
+                {
+                    "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                    "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                    "Created": lambda r: r.get("created_at"),
+                },
+            )
+            st.dataframe(
+                volunteers_df if not volunteers_df.empty else pd.DataFrame(columns=["Name", "Type", "Region", "Created"]),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     # --- B. Partnerships ---
     with tab_part:
@@ -2803,6 +2870,24 @@ def main_dashboard():
         c1, c2 = st.columns(2)
         c1.metric("Active Orgs in Region", data['partnerships']['active_referrals'])
         c2.metric("Network Memberships", data['partnerships']['networks_sat_on'])
+        with st.expander("Metric Drill-down"):
+            st.markdown("**Active Orgs in Region**")
+            org_df = _rows_to_df(
+                raw_kpi.get("region_orgs") or [],
+                {
+                    "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                    "Type": lambda r: str(r.get("type") or ""),
+                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                    "Created": lambda r: r.get("created_at"),
+                },
+            )
+            st.dataframe(
+                org_df if not org_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("**Network Memberships**")
+            st.caption("No direct source field is currently mapped for this metric.")
 
     # --- C. Delivery ---
     with tab_del:
@@ -2817,6 +2902,15 @@ def main_dashboard():
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
         fig_pie = px.pie(df_demo, values='Count', names='Group', title="Representation from Groups")
         st.plotly_chart(fig_pie)
+        with st.expander("Metric Drill-down"):
+            st.markdown("**Walks Delivered / Total Participants**")
+            delivery_df = pd.DataFrame(raw_kpi.get("delivery_events") or [])
+            if not delivery_df.empty:
+                st.dataframe(delivery_df, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No delivery-tagged event rows found for this filtered period.")
+            st.markdown("**Bursary Participants / Avg Wellbeing Change**")
+            st.caption("No raw source fields are currently mapped for these metrics in Beacon.")
 
     # --- D. Income ---
     with tab_inc:
@@ -2828,6 +2922,55 @@ def main_dashboard():
         with c2:
             st.metric("Bids Submitted", data['income']['bids_submitted'])
             st.metric("Corporate Partners", data['income']['corporate_partners'])
+        with st.expander("Metric Drill-down"):
+            st.markdown("**Total Funds Raised (from where and when)**")
+            payment_rows = []
+            for p in raw_kpi.get("region_payments") or []:
+                payment_rows.append({
+                    "Source": "Payments",
+                    "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
+                    "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
+                    "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
+                    "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
+                })
+            grant_rows = []
+            for g in raw_kpi.get("region_grants") or []:
+                grant_rows.append({
+                    "Source": "Grants",
+                    "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                    "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                    "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                    "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                })
+            funds_df = pd.DataFrame(payment_rows + grant_rows)
+            if not funds_df.empty:
+                st.dataframe(funds_df.sort_values("When", ascending=False), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No payment or grant rows found for this filtered period.")
+            st.markdown("**Bids Submitted**")
+            bids_df = pd.DataFrame([r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])])
+            st.dataframe(
+                bids_df if not bids_df.empty else pd.DataFrame(columns=["Source", "When", "From", "Amount", "Status"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("**Corporate Partners**")
+            corp_df = _rows_to_df(
+                raw_kpi.get("corporate_orgs") or [],
+                {
+                    "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                    "Type": lambda r: str(r.get("type") or ""),
+                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                    "Created": lambda r: r.get("created_at"),
+                },
+            )
+            st.dataframe(
+                corp_df if not corp_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.markdown("**In-Kind Value**")
+            st.caption("No raw source field is currently mapped for this metric.")
 
         st.subheader("Income Over Time")
         raw_income = (data.get("_raw_income") or {})
@@ -2905,6 +3048,8 @@ def main_dashboard():
         c2.metric("Media Coverage", data['comms']['media_coverage'])
         c3.metric("Newsletters Sent", data['comms']['newsletters_sent'])
         c4.metric("Open Rate", f"{data['comms']['open_rate']}%")
+        with st.expander("Metric Drill-down"):
+            st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
 
     # --- CASE STUDIES ---
     with tab_case:
