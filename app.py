@@ -1533,27 +1533,27 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
             query = query.lte(field, end_date.isoformat())
         return query
 
+    def _fetch_all_rows(table, columns, date_field=None, batch_size=1000):
+        rows = []
+        offset = 0
+        while True:
+            q = DB_CLIENT.table(table).select(columns)
+            if date_field:
+                q = _apply_date_filter(q, date_field)
+            chunk = q.range(offset, offset + batch_size - 1).execute().data or []
+            rows.extend(chunk)
+            if len(chunk) < batch_size:
+                break
+            offset += batch_size
+        return rows
+
     try:
-        people_q = DB_CLIENT.table("beacon_people").select("payload, created_at")
-        people_q = _apply_date_filter(people_q, "created_at")
-        people_rows = people_q.execute().data or []
-
-        org_q = DB_CLIENT.table("beacon_organisations").select("payload, created_at")
-        org_q = _apply_date_filter(org_q, "created_at")
-        org_rows = org_q.execute().data or []
-
-        # For events, we need the region column as well to ensure robust mapping
-        events_q = DB_CLIENT.table("beacon_events").select("payload, start_date, region")
-        events_q = _apply_date_filter(events_q, "start_date")
-        event_rows = events_q.execute().data or []
-
-        payments_q = DB_CLIENT.table("beacon_payments").select("payload, payment_date")
-        payments_q = _apply_date_filter(payments_q, "payment_date")
-        payment_rows = payments_q.execute().data or []
-
-        grants_q = DB_CLIENT.table("beacon_grants").select("payload, close_date")
-        grants_q = _apply_date_filter(grants_q, "close_date")
-        grant_rows = grants_q.execute().data or []
+        people_rows = _fetch_all_rows("beacon_people", "payload, created_at", "created_at")
+        org_rows = _fetch_all_rows("beacon_organisations", "payload, created_at", "created_at")
+        # For events, we need the region column as well to ensure robust mapping.
+        event_rows = _fetch_all_rows("beacon_events", "payload, start_date, region", "start_date")
+        payment_rows = _fetch_all_rows("beacon_payments", "payload, payment_date", "payment_date")
+        grant_rows = _fetch_all_rows("beacon_grants", "payload, close_date", "close_date")
     except Exception as e:
         st.error(f"Supabase Data Error: {e}")
         return None
