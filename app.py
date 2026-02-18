@@ -1632,6 +1632,44 @@ def get_last_refresh_timestamp():
     except Exception:
         return None
 
+def clear_dashboard_data_except_users(admin_client):
+    # Deliberately excludes user/auth tables (e.g. user_roles, roles, auth users).
+    tables = [
+        ("beacon_people", "id"),
+        ("beacon_organisations", "id"),
+        ("beacon_events", "id"),
+        ("beacon_payments", "id"),
+        ("beacon_grants", "id"),
+        ("case_studies", "id"),
+        ("audit_logs", "id"),
+    ]
+    deleted = {}
+    errors = []
+
+    for table, key in tables:
+        table_deleted = 0
+        while True:
+            try:
+                rows = admin_client.table(table).select(key).limit(500).execute().data or []
+            except Exception as e:
+                errors.append(f"{table}: {e}")
+                break
+
+            ids = [r.get(key) for r in rows if r.get(key) is not None]
+            if not ids:
+                break
+
+            try:
+                admin_client.table(table).delete().in_(key, ids).execute()
+                table_deleted += len(ids)
+            except Exception as e:
+                errors.append(f"{table}: {e}")
+                break
+
+        deleted[table] = table_deleted
+
+    return deleted, errors
+
 # --- UI COMPONENTS ---
 
 def login_page():
@@ -2005,24 +2043,37 @@ def admin_dashboard():
         st.info("CSV upload is available only in Supabase mode.")
     col_sys_1, col_sys_2 = st.columns([1, 3])
     refresh_reason = col_sys_2.text_input("Reason for full refresh", key="refresh_reason")
-    refresh_confirm = col_sys_2.checkbox("I confirm full dashboard cache refresh", key="refresh_confirm")
+    refresh_confirm = col_sys_2.checkbox("I confirm full dashboard data reset (users kept)", key="refresh_confirm")
     with col_sys_1:
         if st.button("Refresh All Dashboard Data"):
             if not refresh_reason.strip():
                 st.error("Please provide a reason for full refresh.")
             elif not refresh_confirm:
                 st.error("Please confirm full dashboard refresh.")
+            elif DB_TYPE != 'supabase':
+                st.error("Full dashboard data reset is available only in Supabase mode.")
             else:
+                refresh_client = get_admin_client()
+                if not refresh_client:
+                    st.error("Admin client not available. Check Supabase secrets.")
+                    return
+
+                deleted_counts, delete_errors = clear_dashboard_data_except_users(refresh_client)
                 log_audit_event(
                     "Dashboard Refresh",
                     {
-                        "scope": "all_cached_data",
+                        "scope": "all_dashboard_data_except_users",
                         "reason": refresh_reason.strip(),
                         "confirmed": True,
+                        "deleted_counts": deleted_counts,
+                        "errors": delete_errors,
                     },
                 )
                 st.cache_data.clear()
-                st.success("Cache cleared. Reloading...")
+                if delete_errors:
+                    st.warning("Dashboard data reset completed with some errors. Check audit logs for details.")
+                else:
+                    st.success("Dashboard data reset complete (users kept). Reloading...")
                 st.rerun()
 
     # --- AUDIT LOG UI ---
