@@ -131,6 +131,33 @@ def inject_global_styles():
             box-shadow: 0 18px 45px rgba(0,0,0,0.4);
         }
 
+        /* Popover triggers styled like KPI metric cards */
+        div[data-testid="stPopover"] > div > button,
+        div[data-testid="stPopoverButton"] > button {
+            width: 100%;
+            min-height: 90px;
+            text-align: left;
+            white-space: pre-line;
+            background: linear-gradient(135deg, rgba(255,61,127,0.25), rgba(90,77,255,0.18), rgba(0,245,212,0.18), rgba(255,159,28,0.18));
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 16px 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.35);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+            color: var(--text) !important;
+            font-weight: 600;
+            line-height: 1.35;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border 0.2s ease;
+        }
+
+        div[data-testid="stPopover"] > div > button:hover,
+        div[data-testid="stPopoverButton"] > button:hover {
+            transform: translateY(-5px) scale(1.01);
+            border: 1px solid rgba(255,255,255,0.4);
+            box-shadow: 0 18px 45px rgba(0,0,0,0.4);
+        }
+
         .stPlotlyChart, .stDataFrame {
             background: linear-gradient(135deg, rgba(90,77,255,0.22), rgba(255,61,127,0.18), rgba(0,245,212,0.18));
             border-radius: 14px;
@@ -2819,39 +2846,50 @@ def main_dashboard():
     with tab_gov:
         st.header("Governance & Infrastructure")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Steering Group Active", "Yes" if data['governance']['steering_group_active'] else "No")
-        c2.metric("Active Volunteers", data['governance']['steering_members'])
-        c3.metric("New Volunteers", data['governance']['volunteers_new'])
-        with st.expander("Metric Drill-down"):
-            st.markdown("**Steering Group Active**")
-            steering_df = _rows_to_df(
-                raw_kpi.get("steering_volunteers") or [],
-                {
-                    "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                    "Type": lambda r: ", ".join(_to_list(r.get("type"))),
-                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                    "Created": lambda r: r.get("created_at"),
-                },
-            )
-            if steering_df.empty:
-                st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
-            else:
-                st.dataframe(steering_df, use_container_width=True, hide_index=True)
-            st.markdown("**Active Volunteers / New Volunteers**")
-            volunteers_df = _rows_to_df(
-                raw_kpi.get("volunteers") or [],
-                {
-                    "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                    "Type": lambda r: ", ".join(_to_list(r.get("type"))),
-                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                    "Created": lambda r: r.get("created_at"),
-                },
-            )
-            st.dataframe(
-                volunteers_df if not volunteers_df.empty else pd.DataFrame(columns=["Name", "Type", "Region", "Created"]),
+        with c1:
+            with st.popover(
+                f"Steering Group Active\n{'Yes' if data['governance']['steering_group_active'] else 'No'}",
                 use_container_width=True,
-                hide_index=True,
-            )
+            ):
+                st.caption("Derived from steering volunteer tags in current filtered data.")
+        with c2:
+            with st.popover(
+                f"Active Volunteers\n{data['governance']['steering_members']}",
+                use_container_width=True,
+            ):
+                steering_df = _rows_to_df(
+                    raw_kpi.get("steering_volunteers") or [],
+                    {
+                        "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                        "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                        "Created": lambda r: r.get("created_at"),
+                    },
+                )
+                if steering_df.empty:
+                    st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
+                else:
+                    st.dataframe(steering_df, use_container_width=True, hide_index=True)
+        with c3:
+            with st.popover(
+                f"New Volunteers\n{data['governance']['volunteers_new']}",
+                use_container_width=True,
+            ):
+                volunteers_df = _rows_to_df(
+                    raw_kpi.get("volunteers") or [],
+                    {
+                        "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                        "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                        "Created": lambda r: r.get("created_at"),
+                    },
+                )
+                st.dataframe(
+                    volunteers_df if not volunteers_df.empty else pd.DataFrame(columns=["Name", "Type", "Region", "Created"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        st.caption("Click a metric above to open its drill-down popup.")
 
     # --- B. Partnerships ---
     with tab_part:
@@ -2868,109 +2906,163 @@ def main_dashboard():
             st.plotly_chart(fig, use_container_width=True)
         
         c1, c2 = st.columns(2)
-        c1.metric("Active Orgs in Region", data['partnerships']['active_referrals'])
-        c2.metric("Network Memberships", data['partnerships']['networks_sat_on'])
-        with st.expander("Metric Drill-down"):
-            st.markdown("**Active Orgs in Region**")
-            org_df = _rows_to_df(
-                raw_kpi.get("region_orgs") or [],
-                {
-                    "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                    "Type": lambda r: str(r.get("type") or ""),
-                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                    "Created": lambda r: r.get("created_at"),
-                },
-            )
-            st.dataframe(
-                org_df if not org_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+        with c1:
+            with st.popover(
+                f"Active Orgs in Region\n{data['partnerships']['active_referrals']}",
                 use_container_width=True,
-                hide_index=True,
-            )
-            st.markdown("**Network Memberships**")
-            st.caption("No direct source field is currently mapped for this metric.")
+            ):
+                st.markdown("**List of Organisations**")
+                org_df = _rows_to_df(
+                    raw_kpi.get("region_orgs") or [],
+                    {
+                        "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                        "Type": lambda r: str(r.get("type") or ""),
+                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                        "Created": lambda r: r.get("created_at"),
+                    },
+                )
+                st.dataframe(
+                    org_df if not org_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        with c2:
+            with st.popover(
+                f"Network Memberships\n{data['partnerships']['networks_sat_on']}",
+                use_container_width=True,
+            ):
+                st.markdown("**Network Memberships**")
+                st.caption("No direct source field is currently mapped for this metric.")
+        st.caption("Click a metric above to open its drill-down popup.")
 
     # --- C. Delivery ---
     with tab_del:
         st.header("Delivery, Reach & Impact")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Walks Delivered", data['delivery']['walks_delivered'])
-        m2.metric("Total Participants", data['delivery']['participants'])
-        m3.metric("Bursary Participants", data['delivery']['bursary_participants'])
-        m4.metric("Avg Wellbeing Change", f"+{data['delivery']['wellbeing_change_score']}")
+        with m1:
+            with st.popover(
+                f"Events\n{data['delivery']['walks_delivered']}",
+                use_container_width=True,
+            ):
+                st.markdown("**List of Attendees by Event**")
+                attendees_rows = []
+                for e in raw_kpi.get("delivery_events") or []:
+                    attendees_rows.append({
+                        "Event": _get_row_value(e, "name", "title", "event_name", "Display Name") or e.get("id"),
+                        "Date": _get_row_value(e, "start_date", "date", "created_at"),
+                        "Attendees": _coerce_int(_get_row_value(e, "number_of_attendees", "Number of attendees", "attendees", "participant_count")),
+                    })
+                attendees_df = pd.DataFrame(attendees_rows)
+                st.dataframe(
+                    attendees_df if not attendees_df.empty else pd.DataFrame(columns=["Event", "Date", "Attendees"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        with m2:
+            with st.popover(
+                f"Total Participants\n{data['delivery']['participants']}",
+                use_container_width=True,
+            ):
+                delivery_df = pd.DataFrame(raw_kpi.get("delivery_events") or [])
+                if not delivery_df.empty:
+                    st.dataframe(delivery_df, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No delivery-tagged event rows found for this filtered period.")
+        with m3:
+            with st.popover(
+                f"Bursary Participants\n{data['delivery']['bursary_participants']}",
+                use_container_width=True,
+            ):
+                st.caption("No raw source fields are currently mapped for this metric in Beacon.")
+        with m4:
+            with st.popover(
+                f"Avg Wellbeing Change\n+{data['delivery']['wellbeing_change_score']}",
+                use_container_width=True,
+            ):
+                st.caption("No raw source fields are currently mapped for this metric in Beacon.")
         
         st.subheader("Demographics")
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
         fig_pie = px.pie(df_demo, values='Count', names='Group', title="Representation from Groups")
         st.plotly_chart(fig_pie)
-        with st.expander("Metric Drill-down"):
-            st.markdown("**Walks Delivered / Total Participants**")
-            delivery_df = pd.DataFrame(raw_kpi.get("delivery_events") or [])
-            if not delivery_df.empty:
-                st.dataframe(delivery_df, use_container_width=True, hide_index=True)
-            else:
-                st.caption("No delivery-tagged event rows found for this filtered period.")
-            st.markdown("**Bursary Participants / Avg Wellbeing Change**")
-            st.caption("No raw source fields are currently mapped for these metrics in Beacon.")
+        st.caption("Click a metric above to open its drill-down popup.")
 
     # --- D. Income ---
     with tab_inc:
         st.header("Income & Funding")
         c1, c2 = st.columns(2)
         with c1:
-            st.metric("Total Funds Raised", f"£{data['income']['total_funds_raised']:,.2f}")
-            st.metric("In-Kind Value", f"£{data['income']['in_kind_value']:,}")
+            with st.popover(
+                f"Total Funds Raised\n£{data['income']['total_funds_raised']:,.2f}",
+                use_container_width=True,
+            ):
+                payment_rows = []
+                for p in raw_kpi.get("region_payments") or []:
+                    payment_rows.append({
+                        "Source": "Payments",
+                        "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
+                        "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
+                        "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
+                        "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
+                    })
+                grant_rows = []
+                for g in raw_kpi.get("region_grants") or []:
+                    grant_rows.append({
+                        "Source": "Grants",
+                        "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                        "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                        "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                        "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                    })
+                funds_df = pd.DataFrame(payment_rows + grant_rows)
+                if not funds_df.empty:
+                    st.dataframe(funds_df.sort_values("When", ascending=False), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("No payment or grant rows found for this filtered period.")
+            with st.popover(
+                f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
+                use_container_width=True,
+            ):
+                st.caption("No raw source field is currently mapped for this metric.")
         with c2:
-            st.metric("Bids Submitted", data['income']['bids_submitted'])
-            st.metric("Corporate Partners", data['income']['corporate_partners'])
-        with st.expander("Metric Drill-down"):
-            st.markdown("**Total Funds Raised (from where and when)**")
-            payment_rows = []
-            for p in raw_kpi.get("region_payments") or []:
-                payment_rows.append({
-                    "Source": "Payments",
-                    "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
-                    "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
-                    "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
-                    "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
-                })
-            grant_rows = []
-            for g in raw_kpi.get("region_grants") or []:
-                grant_rows.append({
-                    "Source": "Grants",
-                    "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
-                    "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
-                    "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
-                    "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
-                })
-            funds_df = pd.DataFrame(payment_rows + grant_rows)
-            if not funds_df.empty:
-                st.dataframe(funds_df.sort_values("When", ascending=False), use_container_width=True, hide_index=True)
-            else:
-                st.caption("No payment or grant rows found for this filtered period.")
-            st.markdown("**Bids Submitted**")
-            bids_df = pd.DataFrame([r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])])
-            st.dataframe(
-                bids_df if not bids_df.empty else pd.DataFrame(columns=["Source", "When", "From", "Amount", "Status"]),
+            with st.popover(
+                f"Bids Submitted\n{data['income']['bids_submitted']}",
                 use_container_width=True,
-                hide_index=True,
-            )
-            st.markdown("**Corporate Partners**")
-            corp_df = _rows_to_df(
-                raw_kpi.get("corporate_orgs") or [],
-                {
-                    "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                    "Type": lambda r: str(r.get("type") or ""),
-                    "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                    "Created": lambda r: r.get("created_at"),
-                },
-            )
-            st.dataframe(
-                corp_df if not corp_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+            ):
+                grant_rows = []
+                for g in raw_kpi.get("region_grants") or []:
+                    grant_rows.append({
+                        "Source": "Grants",
+                        "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                        "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                        "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                        "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                    })
+                bids_df = pd.DataFrame([r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])])
+                st.dataframe(
+                    bids_df if not bids_df.empty else pd.DataFrame(columns=["Source", "When", "From", "Amount", "Status"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            with st.popover(
+                f"Corporate Partners\n{data['income']['corporate_partners']}",
                 use_container_width=True,
-                hide_index=True,
-            )
-            st.markdown("**In-Kind Value**")
-            st.caption("No raw source field is currently mapped for this metric.")
+            ):
+                corp_df = _rows_to_df(
+                    raw_kpi.get("corporate_orgs") or [],
+                    {
+                        "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                        "Type": lambda r: str(r.get("type") or ""),
+                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                        "Created": lambda r: r.get("created_at"),
+                    },
+                )
+                st.dataframe(
+                    corp_df if not corp_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        st.caption("Click a metric above to open its drill-down popup.")
 
         st.subheader("Income Over Time")
         raw_income = (data.get("_raw_income") or {})
@@ -3044,12 +3136,19 @@ def main_dashboard():
     with tab_com:
         st.header("Communications & Profile")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Press Releases", data['comms']['press_releases'])
-        c2.metric("Media Coverage", data['comms']['media_coverage'])
-        c3.metric("Newsletters Sent", data['comms']['newsletters_sent'])
-        c4.metric("Open Rate", f"{data['comms']['open_rate']}%")
-        with st.expander("Metric Drill-down"):
-            st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+        with c1:
+            with st.popover(f"Press Releases\n{data['comms']['press_releases']}", use_container_width=True):
+                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+        with c2:
+            with st.popover(f"Media Coverage\n{data['comms']['media_coverage']}", use_container_width=True):
+                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+        with c3:
+            with st.popover(f"Newsletters Sent\n{data['comms']['newsletters_sent']}", use_container_width=True):
+                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+        with c4:
+            with st.popover(f"Open Rate\n{data['comms']['open_rate']}%", use_container_width=True):
+                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+        st.caption("Click a metric above to open its drill-down popup.")
 
     # --- CASE STUDIES ---
     with tab_case:
