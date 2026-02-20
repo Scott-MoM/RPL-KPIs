@@ -2923,7 +2923,8 @@ def main_dashboard():
         return pd.DataFrame(out)
 
     def _details_enabled(key, label="Load drill-down details"):
-        return st.checkbox(label, key=key, value=False)
+        st.caption(label)
+        return True
 
     def _show_df_limited(df, key, default_limit=150):
         if df is None or df.empty:
