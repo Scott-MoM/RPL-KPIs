@@ -158,6 +158,35 @@ def inject_global_styles():
             box-shadow: 0 18px 45px rgba(0,0,0,0.4);
         }
 
+        /* Drill-down controls: enforce readable contrast */
+        div[data-testid="stPopover"] [data-baseweb="select"] > div {
+            background: rgba(12, 18, 32, 0.92) !important;
+            color: #f7f8fb !important;
+            border: 1px solid rgba(255,255,255,0.28) !important;
+        }
+
+        div[data-testid="stPopover"] [data-baseweb="select"] input,
+        div[data-testid="stPopover"] [data-baseweb="select"] span,
+        div[data-testid="stPopover"] [data-baseweb="select"] div {
+            color: #f7f8fb !important;
+        }
+
+        div[role="listbox"] {
+            background: #0f1a2b !important;
+            color: #f7f8fb !important;
+            border: 1px solid rgba(255,255,255,0.22) !important;
+        }
+
+        div[role="option"] {
+            background: transparent !important;
+            color: #f7f8fb !important;
+        }
+
+        div[role="option"][aria-selected="true"] {
+            background: rgba(90, 77, 255, 0.35) !important;
+            color: #ffffff !important;
+        }
+
         .stPlotlyChart, .stDataFrame {
             background: linear-gradient(135deg, rgba(90,77,255,0.22), rgba(255,61,127,0.18), rgba(0,245,212,0.18));
             border-radius: 14px;
