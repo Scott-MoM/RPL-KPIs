@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import json
 import os
@@ -494,7 +494,7 @@ def _coerce_money(value):
             if coerced != 0.0:
                 return coerced
         return 0.0
-    s = str(value).replace("Â£", "").replace("£", "").replace(",", "").strip()
+    s = str(value).replace("£", "").replace(",", "").strip()
     try:
         return float(s)
     except Exception:
@@ -2850,6 +2850,29 @@ def main_dashboard():
                     row_out[out_col] = None
             out.append(row_out)
         return pd.DataFrame(out)
+
+    def _render_deep_drilldown(rows, label_getter, key, empty_msg="No records available for deeper drill-down."):
+        if not rows:
+            st.caption(empty_msg)
+            return
+        options = []
+        for i, row in enumerate(rows):
+            try:
+                label = label_getter(row)
+            except Exception:
+                label = None
+            label = str(label).strip() if label is not None else ""
+            if not label:
+                label = f"Record {i + 1}"
+            options.append((label, i))
+        selected = st.selectbox(
+            "Select a row for more detail",
+            options,
+            key=key,
+            format_func=lambda item: item[0],
+        )
+        _, selected_idx = selected
+        st.json(rows[selected_idx], expanded=False)
     
 
     # Tabs
@@ -2867,6 +2890,12 @@ def main_dashboard():
                 use_container_width=True,
             ):
                 st.caption("Derived from steering volunteer tags in current filtered data.")
+                _render_deep_drilldown(
+                    raw_kpi.get("steering_volunteers") or [],
+                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                    key="dd_gov_steering_active",
+                    empty_msg="No steering source rows found for deeper drill-down.",
+                )
         with c2:
             with st.popover(
                 f"Active Volunteers\n{data['governance']['steering_members']}",
@@ -2885,6 +2914,12 @@ def main_dashboard():
                     st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
                 else:
                     st.dataframe(steering_df, use_container_width=True, hide_index=True)
+                _render_deep_drilldown(
+                    raw_kpi.get("steering_volunteers") or [],
+                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                    key="dd_gov_steering_members",
+                    empty_msg="No steering source rows found for deeper drill-down.",
+                )
         with c3:
             with st.popover(
                 f"New Volunteers\n{data['governance']['volunteers_new']}",
@@ -2903,6 +2938,12 @@ def main_dashboard():
                     volunteers_df if not volunteers_df.empty else pd.DataFrame(columns=["Name", "Type", "Region", "Created"]),
                     use_container_width=True,
                     hide_index=True,
+                )
+                _render_deep_drilldown(
+                    raw_kpi.get("volunteers") or [],
+                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                    key="dd_gov_new_volunteers",
+                    empty_msg="No volunteer source rows found for deeper drill-down.",
                 )
         st.caption("Click a metric above to open its drill-down popup.")
 
@@ -2941,6 +2982,12 @@ def main_dashboard():
                     use_container_width=True,
                     hide_index=True,
                 )
+                _render_deep_drilldown(
+                    raw_kpi.get("region_orgs") or [],
+                    lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                    key="dd_part_active_orgs",
+                    empty_msg="No organisation source rows found for deeper drill-down.",
+                )
         with c2:
             with st.popover(
                 f"Network Memberships\n{data['partnerships']['networks_sat_on']}",
@@ -2948,6 +2995,7 @@ def main_dashboard():
             ):
                 st.markdown("**Network Memberships**")
                 st.caption("No direct source field is currently mapped for this metric.")
+                st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- C. Delivery ---
@@ -2960,8 +3008,9 @@ def main_dashboard():
                 use_container_width=True,
             ):
                 st.markdown("**List of Attendees by Event**")
+                delivery_events = raw_kpi.get("delivery_events") or []
                 attendees_rows = []
-                for e in raw_kpi.get("delivery_events") or []:
+                for e in delivery_events:
                     attendees_rows.append({
                         "Event": _get_row_value(e, "name", "title", "event_name", "Display Name") or e.get("id"),
                         "Date": _get_row_value(e, "start_date", "date", "created_at"),
@@ -2973,28 +3022,43 @@ def main_dashboard():
                     use_container_width=True,
                     hide_index=True,
                 )
+                _render_deep_drilldown(
+                    delivery_events,
+                    lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
+                    key="dd_del_events",
+                    empty_msg="No event source rows found for deeper drill-down.",
+                )
         with m2:
             with st.popover(
                 f"Total Participants\n{data['delivery']['participants']}",
                 use_container_width=True,
             ):
-                delivery_df = pd.DataFrame(raw_kpi.get("delivery_events") or [])
+                delivery_events = raw_kpi.get("delivery_events") or []
+                delivery_df = pd.DataFrame(delivery_events)
                 if not delivery_df.empty:
                     st.dataframe(delivery_df, use_container_width=True, hide_index=True)
                 else:
                     st.caption("No delivery-tagged event rows found for this filtered period.")
+                _render_deep_drilldown(
+                    delivery_events,
+                    lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
+                    key="dd_del_participants",
+                    empty_msg="No event source rows found for deeper drill-down.",
+                )
         with m3:
             with st.popover(
                 f"Bursary Participants\n{data['delivery']['bursary_participants']}",
                 use_container_width=True,
             ):
                 st.caption("No raw source fields are currently mapped for this metric in Beacon.")
+                st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         with m4:
             with st.popover(
                 f"Avg Wellbeing Change\n+{data['delivery']['wellbeing_change_score']}",
                 use_container_width=True,
             ):
                 st.caption("No raw source fields are currently mapped for this metric in Beacon.")
+                st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         
         st.subheader("Demographics")
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
@@ -3034,11 +3098,18 @@ def main_dashboard():
                     st.dataframe(funds_df.sort_values("When", ascending=False), use_container_width=True, hide_index=True)
                 else:
                     st.caption("No payment or grant rows found for this filtered period.")
+                _render_deep_drilldown(
+                    payment_rows + grant_rows,
+                    lambda r: f"{r.get('Source', '')} - {r.get('From', '')}",
+                    key="dd_inc_total_funds",
+                    empty_msg="No payment or grant source rows found for deeper drill-down.",
+                )
             with st.popover(
                 f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
                 use_container_width=True,
             ):
                 st.caption("No raw source field is currently mapped for this metric.")
+                st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         with c2:
             with st.popover(
                 f"Bids Submitted\n{data['income']['bids_submitted']}",
@@ -3059,12 +3130,20 @@ def main_dashboard():
                     use_container_width=True,
                     hide_index=True,
                 )
+                bids_rows = [r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])]
+                _render_deep_drilldown(
+                    bids_rows,
+                    lambda r: f"{r.get('From', '')} ({r.get('Status', '')})",
+                    key="dd_inc_bids",
+                    empty_msg="No bid source rows found for deeper drill-down.",
+                )
             with st.popover(
                 f"Corporate Partners\n{data['income']['corporate_partners']}",
                 use_container_width=True,
             ):
+                corp_rows = raw_kpi.get("corporate_orgs") or []
                 corp_df = _rows_to_df(
-                    raw_kpi.get("corporate_orgs") or [],
+                    corp_rows,
                     {
                         "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
                         "Type": lambda r: str(r.get("type") or ""),
@@ -3076,6 +3155,12 @@ def main_dashboard():
                     corp_df if not corp_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
                     use_container_width=True,
                     hide_index=True,
+                )
+                _render_deep_drilldown(
+                    corp_rows,
+                    lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                    key="dd_inc_corp",
+                    empty_msg="No corporate partner source rows found for deeper drill-down.",
                 )
         st.caption("Click a metric above to open its drill-down popup.")
 
@@ -3837,6 +3922,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
