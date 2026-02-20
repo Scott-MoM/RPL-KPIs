@@ -500,6 +500,21 @@ def _coerce_money(value):
     except Exception:
         return 0.0
 
+def _coerce_int(value):
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(float(value))
+    try:
+        s = str(value).strip().replace(",", "")
+        if not s:
+            return 0
+        return int(float(s))
+    except Exception:
+        return 0
+
 def render_plot_with_export(fig, export_name, key_prefix):
     plot_config = {
         "displayModeBar": True,
