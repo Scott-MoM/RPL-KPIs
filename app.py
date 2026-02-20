@@ -2681,6 +2681,29 @@ def stop_manual_sync_job(job_id, user_email=None, region=None):
         )
     return True, "Stop request sent. The sync will stop shortly."
 
+def clear_manual_sync_job(job_id, user_email=None, region=None):
+    if not job_id:
+        return False, "No manual sync job selected."
+    with SYNC_JOBS_LOCK:
+        state = SYNC_JOBS.get(job_id)
+        if state:
+            state["status"] = "cancelled"
+            state["progress"] = 100
+            state["message"] = "Manual sync cleared by user."
+            state["ended_at"] = time.time()
+            SYNC_JOBS[job_id] = state
+    st.session_state.pop("manual_sync_job_id", None)
+    admin_client = get_admin_client()
+    if admin_client:
+        _insert_system_audit(
+            admin_client,
+            "Data Sync Cleared",
+            {"source": "beacon_api", "trigger": "manual_ui", "job_id": job_id},
+            user_email=user_email or st.session_state.get("email", "System"),
+            region=region or st.session_state.get("region", "Global"),
+        )
+    return True, "Stuck sync state cleared."
+
 def render_manual_sync_status():
     job_id = st.session_state.get("manual_sync_job_id")
     if not job_id:
@@ -3197,8 +3220,20 @@ def admin_dashboard():
                     st.session_state["manual_sync_job_id"] = active_state.get("job_id")
                     active_job_id = active_state.get("job_id")
             if active_state and active_state.get("status") in ("queued", "running"):
-                if st.button("Stop Manual API Sync", key="stop_manual_sync_btn"):
+                c_stop, c_clear = st.columns(2)
+                if c_stop.button("Stop Manual API Sync", key="stop_manual_sync_btn"):
                     ok, msg = stop_manual_sync_job(
+                        active_job_id,
+                        user_email=st.session_state.get("email", "System"),
+                        region=st.session_state.get("region", "Global"),
+                    )
+                    if ok:
+                        st.warning(msg)
+                    else:
+                        st.info(msg)
+                    st.rerun()
+                if c_clear.button("Clear Stuck Sync", key="clear_stuck_sync_btn"):
+                    ok, msg = clear_manual_sync_job(
                         active_job_id,
                         user_email=st.session_state.get("email", "System"),
                         region=st.session_state.get("region", "Global"),
