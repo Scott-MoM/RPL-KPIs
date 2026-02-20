@@ -2070,30 +2070,66 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
             query = query.lte(field, end_date.isoformat())
         return query
 
-    def _fetch_all_rows(table, columns, date_field=None, batch_size=1000):
+    def _fetch_all_rows(table, columns, date_field=None, batch_size=1000, max_retries=4):
         rows = []
         offset = 0
         while True:
-            q = DB_CLIENT.table(table).select(columns)
-            if date_field:
-                q = _apply_date_filter(q, date_field)
-            chunk = q.range(offset, offset + batch_size - 1).execute().data or []
+            attempt = 0
+            while True:
+                try:
+                    q = DB_CLIENT.table(table).select(columns)
+                    if date_field:
+                        q = _apply_date_filter(q, date_field)
+                    chunk = q.range(offset, offset + batch_size - 1).execute().data or []
+                    break
+                except Exception as e:
+                    msg = str(e).lower()
+                    retriable = any(
+                        token in msg
+                        for token in (
+                            "502",
+                            "bad gateway",
+                            "json could not be generated",
+                            "timeout",
+                            "timed out",
+                            "connection reset",
+                            "temporarily unavailable",
+                        )
+                    )
+                    if retriable and attempt < max_retries:
+                        time.sleep(min(8, 1.5 * (2 ** attempt)))
+                        attempt += 1
+                        continue
+                    raise
             rows.extend(chunk)
             if len(chunk) < batch_size:
                 break
             offset += batch_size
         return rows
 
-    try:
-        people_rows = _fetch_all_rows("beacon_people", "payload, created_at", "created_at")
-        org_rows = _fetch_all_rows("beacon_organisations", "payload, created_at", "created_at")
-        # For events, we need the region column as well to ensure robust mapping.
-        event_rows = _fetch_all_rows("beacon_events", "payload, start_date, region", "start_date")
-        payment_rows = _fetch_all_rows("beacon_payments", "payload, payment_date", "payment_date")
-        grant_rows = _fetch_all_rows("beacon_grants", "payload, close_date", "close_date")
-    except Exception as e:
-        st.error(f"Supabase Data Error: {e}")
-        return None
+    fetch_errors = []
+    def _safe_fetch(table, columns, date_field):
+        try:
+            return _fetch_all_rows(table, columns, date_field)
+        except Exception as e:
+            fetch_errors.append((table, str(e)))
+            return []
+
+    people_rows = _safe_fetch("beacon_people", "payload, created_at", "created_at")
+    org_rows = _safe_fetch("beacon_organisations", "payload, created_at", "created_at")
+    # For events, we need the region column as well to ensure robust mapping.
+    event_rows = _safe_fetch("beacon_events", "payload, start_date, region", "start_date")
+    payment_rows = _safe_fetch("beacon_payments", "payload, payment_date", "payment_date")
+    grant_rows = _safe_fetch("beacon_grants", "payload, close_date", "close_date")
+
+    if fetch_errors:
+        failed_tables = ", ".join(t for t, _ in fetch_errors)
+        st.warning(f"Temporary Supabase issue while loading: {failed_tables}. Showing available data.")
+        # If everything failed, still show explicit error and return no data.
+        if not any([people_rows, org_rows, event_rows, payment_rows, grant_rows]):
+            first_error = fetch_errors[0][1] if fetch_errors else "Unknown error"
+            st.error(f"Supabase Data Error: {first_error}")
+            return None
 
     people = []
     for r in people_rows:
