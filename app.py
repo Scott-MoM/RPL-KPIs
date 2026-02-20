@@ -2855,7 +2855,7 @@ def main_dashboard():
         if not rows:
             st.caption(empty_msg)
             return
-        options = []
+        labels = []
         for i, row in enumerate(rows):
             try:
                 label = label_getter(row)
@@ -2864,15 +2864,15 @@ def main_dashboard():
             label = str(label).strip() if label is not None else ""
             if not label:
                 label = f"Record {i + 1}"
-            options.append((label, i))
-        selected = st.selectbox(
+            labels.append(label)
+        selected_idx = st.selectbox(
             "Select a row for more detail",
-            options,
+            list(range(len(rows))),
             key=key,
-            format_func=lambda item: item[0],
+            format_func=lambda idx: labels[idx],
         )
-        _, selected_idx = selected
-        st.json(rows[selected_idx], expanded=False)
+        st.caption(f"Selected: {labels[selected_idx]}")
+        st.json(rows[selected_idx], expanded=True)
     
 
     # Tabs
@@ -3373,23 +3373,44 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
 
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
     
-    # Display Studies (Filtered by Region or Global Admin)
-    view_region = region_override or st.session_state.get('region', 'Global')
-    if st.session_state['role'] == 'Admin' and view_region == 'Global':
-        display_studies = get_case_studies(None, start_date=start_date, end_date=end_date) # Get All
+    # Display Studies (Filtered by Region or All Regions)
+    role = st.session_state.get("role")
+    view_region = region_override or st.session_state.get("region", "Global")
+    if region_override is None and role in ["Admin", "Manager", "RPL"]:
+        st.sidebar.markdown("### Case Studies Region")
+        case_all_regions = st.sidebar.checkbox(
+            "All Regions",
+            value=(str(view_region) == "Global"),
+            key="case_studies_all_regions",
+        )
+        if case_all_regions:
+            view_region = "Global"
+        else:
+            region_options = ["North of England", "South of England", "Midlands", "Wales", "Other"]
+            default_index = region_options.index(view_region) if view_region in region_options else 0
+            view_region = st.sidebar.selectbox(
+                "Region",
+                region_options,
+                index=default_index,
+                key="case_studies_region_select",
+            )
+        st.sidebar.caption(f"Case Studies Region: {view_region}")
+
+    if view_region == "Global" and role in ["Admin", "Manager", "RPL"]:
+        display_studies = get_case_studies(None, start_date=start_date, end_date=end_date)
     else:
         display_studies = get_case_studies(view_region, start_date=start_date, end_date=end_date)
 
-        if display_studies:
-            # Sort by date added (oldest -> newest)
-            display_studies.sort(key=lambda x: x.get('date_added', ''), reverse=False)
-            for study in display_studies:
-                with st.container():
-                    st.markdown(f"#### {study['title']}")
-                    st.caption(f"Date: {study.get('date_added','')} | Region: {study.get('region','')}")
-                    st.info(study['content'])
-        else:
-            st.write("No case studies found.")
+    if display_studies:
+        # Sort by date added (oldest -> newest)
+        display_studies.sort(key=lambda x: x.get('date_added', ''), reverse=False)
+        for study in display_studies:
+            with st.container():
+                st.markdown(f"#### {study['title']}")
+                st.caption(f"Date: {study.get('date_added','')} | Region: {study.get('region','')}")
+                st.info(study['content'])
+    else:
+        st.write("No case studies found.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 def _normalize_email_list(values):
