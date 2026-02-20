@@ -795,9 +795,19 @@ def _extract_page_progress(response_json):
     return None, None
 
 def _extract_entity(record):
-    if isinstance(record, dict) and isinstance(record.get("entity"), dict):
-        return record.get("entity") or {}
-    return record if isinstance(record, dict) else {}
+    if not isinstance(record, dict):
+        return {}
+    if isinstance(record.get("entity"), dict):
+        entity = dict(record.get("entity") or {})
+        # Preserve wrapper metadata/relationships when Beacon sends related data
+        # outside entity (common for participant links on events).
+        for k, v in record.items():
+            if k == "entity":
+                continue
+            if k not in entity:
+                entity[k] = v
+        return entity
+    return record
 
 def _extract_region_tags(record):
     candidates = []
@@ -3244,6 +3254,7 @@ def main_dashboard():
                     if selected_event:
                         participant_list = selected_event.get("participant_list") or []
                         participant_ids = selected_event.get("participant_ids") or []
+                        participant_count = _coerce_int(selected_event.get("participants"))
                         st.markdown("**Participants in selected event**")
                         if participant_list:
                             participants_df = pd.DataFrame({"Participant": participant_list})
@@ -3252,6 +3263,11 @@ def main_dashboard():
                             ids_df = pd.DataFrame({"Participant ID": participant_ids})
                             _show_df_limited(ids_df, key="tbl_del_participants_ids", default_limit=250)
                             st.caption("Participant IDs found but names are not available in the current source rows.")
+                        elif participant_count > 0:
+                            placeholder_rows = [f"Participant {i} (name unavailable)" for i in range(1, participant_count + 1)]
+                            placeholder_df = pd.DataFrame({"Participant": placeholder_rows})
+                            _show_df_limited(placeholder_df, key="tbl_del_participants_placeholder", default_limit=250)
+                            st.caption("Names are not included in current event source rows. Showing participant count placeholders.")
                         else:
                             st.caption("No participant names are available for this event in the current source data.")
         with m3:

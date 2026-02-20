@@ -81,9 +81,18 @@ def extract_page_progress(payload):
 
 
 def extract_entity(record):
-    if isinstance(record, dict) and isinstance(record.get("entity"), dict):
-        return record.get("entity") or {}
-    return record if isinstance(record, dict) else {}
+    if not isinstance(record, dict):
+        return {}
+    if isinstance(record.get("entity"), dict):
+        entity = dict(record.get("entity") or {})
+        # Keep wrapper-level fields (e.g., relationships) when present.
+        for k, v in record.items():
+            if k == "entity":
+                continue
+            if k not in entity:
+                entity[k] = v
+        return entity
+    return record
 
 
 def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pages=200):
