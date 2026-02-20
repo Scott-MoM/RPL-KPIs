@@ -1007,6 +1007,25 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         )
         fetch_breakdown_ms[dataset_key] = int((time.time() - endpoint_started) * 1000)
         _report(fetch_end, f"Fetched Beacon {label}: {len(datasets[dataset_key])} records.")
+
+    # Optional direct attendee source (preferred for participant drill-down).
+    attendee_endpoint_candidates = [
+        ("event_attendee", "event attendees"),
+        ("event_attendees", "event attendees"),
+        ("attendance", "attendance"),
+        ("event_attendance", "event attendance"),
+    ]
+    datasets["event_attendees"] = []
+    attendee_fetch_started = time.time()
+    for endpoint, label in attendee_endpoint_candidates:
+        try:
+            rows = _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, endpoint)
+            datasets["event_attendees"] = rows
+            _report(50, f"Fetched Beacon {label}: {len(rows)} records from endpoint '{endpoint}'.")
+            break
+        except Exception:
+            continue
+    fetch_breakdown_ms["event_attendees"] = int((time.time() - attendee_fetch_started) * 1000)
     fetch_duration_ms = int((time.time() - fetch_started) * 1000)
 
     _report(55, "Transforming Beacon records...")
@@ -1025,6 +1044,12 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
             entity["c_region"] = _extract_region_tags(entity)
         people_seen[rec_id] = {"id": rec_id, "payload": entity, "created_at": entity.get("created_at"), "updated_at": now_iso}
 
+    people_name_by_id = {}
+    for p_id, p_row in people_seen.items():
+        p_payload = p_row.get("payload") or {}
+        p_name = _get_row_value(p_payload, "name", "full_name", "Display Name", "email") or p_id
+        people_name_by_id[str(p_id)] = str(p_name).strip()
+
     org_seen = {}
     for row in datasets["organisations"]:
         entity = _sanitize(_extract_entity(row))
@@ -1039,6 +1064,78 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
             entity["c_region"] = _extract_region_tags(entity)
         org_seen[rec_id] = {"id": rec_id, "payload": entity, "created_at": entity.get("created_at"), "updated_at": now_iso}
 
+    attendee_map = {}
+
+    def _attendee_event_id(att):
+        direct = _get_row_value(att, "event_id", "eventId", "event")
+        if isinstance(direct, dict):
+            direct = direct.get("id")
+        if direct not in [None, ""]:
+            return str(direct)
+        for key in ("event", "activity", "session"):
+            ref = att.get(key)
+            if isinstance(ref, dict) and ref.get("id") not in [None, ""]:
+                return str(ref.get("id"))
+        rel = att.get("relationships")
+        if isinstance(rel, dict):
+            for key in ("event", "events", "activity", "session"):
+                ref = rel.get(key)
+                if isinstance(ref, dict):
+                    if isinstance(ref.get("data"), dict) and ref["data"].get("id") not in [None, ""]:
+                        return str(ref["data"]["id"])
+                    if ref.get("id") not in [None, ""]:
+                        return str(ref.get("id"))
+                    if isinstance(ref.get("data"), list) and ref["data"]:
+                        first = ref["data"][0]
+                        if isinstance(first, dict) and first.get("id") not in [None, ""]:
+                            return str(first.get("id"))
+        return None
+
+    def _attendee_person_id(att):
+        direct = _get_row_value(att, "person_id", "contact_id", "participant_id", "person", "contact", "participant")
+        if isinstance(direct, dict):
+            direct = direct.get("id")
+        if direct not in [None, ""]:
+            return str(direct)
+        rel = att.get("relationships")
+        if isinstance(rel, dict):
+            for key in ("person", "people", "contact", "participant"):
+                ref = rel.get(key)
+                if isinstance(ref, dict):
+                    if isinstance(ref.get("data"), dict) and ref["data"].get("id") not in [None, ""]:
+                        return str(ref["data"]["id"])
+                    if ref.get("id") not in [None, ""]:
+                        return str(ref.get("id"))
+        return None
+
+    def _attendee_name(att):
+        return _get_row_value(
+            att,
+            "name",
+            "full_name",
+            "display_name",
+            "participant_name",
+            "attendee_name",
+            "person_name",
+            "contact_name",
+            "email",
+        )
+
+    for row in datasets.get("event_attendees") or []:
+        att = _sanitize(_extract_entity(row))
+        event_id = _attendee_event_id(att)
+        if not event_id:
+            continue
+        person_id = _attendee_person_id(att)
+        name = _attendee_name(att)
+        if (not name) and person_id:
+            name = people_name_by_id.get(str(person_id))
+        bucket = attendee_map.setdefault(event_id, {"names": set(), "ids": set()})
+        if person_id:
+            bucket["ids"].add(str(person_id))
+        if name:
+            bucket["names"].add(str(name).strip())
+
     event_seen = {}
     for row in datasets["events"]:
         entity = _sanitize(_extract_entity(row))
@@ -1050,7 +1147,19 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         if not entity.get("c_region"):
             entity["c_region"] = _extract_region_tags(entity)
         entity["type"] = entity.get("type") or entity.get("event_type") or entity.get("category")
-        entity["number_of_attendees"] = entity.get("number_of_attendees") or entity.get("attendees") or entity.get("participant_count")
+        attendee_bucket = attendee_map.get(str(rec_id), {"names": set(), "ids": set()})
+        direct_names = sorted([n for n in attendee_bucket["names"] if n])
+        direct_ids = sorted([i for i in attendee_bucket["ids"] if i])
+        if direct_names:
+            entity["participant_list"] = direct_names
+        if direct_ids:
+            entity["participant_ids"] = direct_ids
+        direct_count = max(len(direct_names), len(direct_ids))
+        existing_count = entity.get("number_of_attendees") or entity.get("attendees") or entity.get("participant_count")
+        if existing_count in [None, ""] and direct_count > 0:
+            entity["number_of_attendees"] = direct_count
+        else:
+            entity["number_of_attendees"] = existing_count
         event_seen[rec_id] = {
             "id": rec_id,
             "payload": entity,
@@ -3109,6 +3218,61 @@ def main_dashboard():
             st.dataframe(df.head(default_limit), use_container_width=True, hide_index=True)
             st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
 
+    def _pretty_field_name(name):
+        return str(name).replace("_", " ").strip().title()
+
+    def _render_readable_record(record, key_prefix):
+        if not isinstance(record, dict):
+            st.write(record)
+            return
+
+        scalar_rows = []
+        list_rows = []
+        nested_rows = []
+        for k, v in record.items():
+            if k in ("raw_event",):
+                continue
+            if isinstance(v, (str, int, float, bool)) or v is None:
+                scalar_rows.append((_pretty_field_name(k), v))
+            elif isinstance(v, list):
+                list_rows.append((k, v))
+            elif isinstance(v, dict):
+                nested_rows.append((k, v))
+
+        if scalar_rows:
+            scalar_df = pd.DataFrame(
+                [{"Field": k, "Value": ("" if v is None else v)} for k, v in scalar_rows]
+            )
+            st.dataframe(scalar_df, use_container_width=True, hide_index=True)
+
+        for k, v in list_rows:
+            label = _pretty_field_name(k)
+            st.markdown(f"**{label}**")
+            if not v:
+                st.caption("None")
+                continue
+            if all(not isinstance(item, dict) for item in v):
+                list_df = pd.DataFrame({label: [str(item) for item in v]})
+                _show_df_limited(list_df, key=f"{key_prefix}_{k}", default_limit=250)
+            else:
+                dict_rows = [item for item in v if isinstance(item, dict)]
+                if dict_rows:
+                    _show_df_limited(pd.DataFrame(dict_rows), key=f"{key_prefix}_{k}", default_limit=100)
+                else:
+                    st.caption("Complex list data available.")
+
+        for k, v in nested_rows:
+            label = _pretty_field_name(k)
+            st.markdown(f"**{label}**")
+            nested_scalars = {kk: vv for kk, vv in v.items() if not isinstance(vv, (dict, list))}
+            if nested_scalars:
+                nested_df = pd.DataFrame(
+                    [{"Field": _pretty_field_name(kk), "Value": ("" if vv is None else vv)} for kk, vv in nested_scalars.items()]
+                )
+                st.dataframe(nested_df, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Nested structured data available.")
+
     def _render_deep_drilldown(rows, label_getter, key, empty_msg="No records available for deeper drill-down."):
         if not rows:
             st.caption(empty_msg)
@@ -3130,8 +3294,11 @@ def main_dashboard():
             format_func=lambda idx: labels[idx],
         )
         st.caption(f"Selected: {labels[selected_idx]}")
-        st.json(rows[selected_idx], expanded=True)
-        return rows[selected_idx]
+        selected = rows[selected_idx]
+        _render_readable_record(selected, key_prefix=f"{key}_record")
+        with st.expander("Technical View (JSON)"):
+            st.json(selected, expanded=False)
+        return selected
     
 
     # Tabs
