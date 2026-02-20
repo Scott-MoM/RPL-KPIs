@@ -1648,6 +1648,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         seen_names = set()
         seen_ids = set()
         context_tokens = ("participant", "attendee", "people", "contact", "person", "member")
+        id_keys = ("id", "person_id", "contact_id", "participant_id", "attendee_id")
 
         def _add_name(value):
             candidate = str(value).strip()
@@ -1676,18 +1677,14 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             if value is None:
                 return
             if isinstance(value, dict):
-                local_name = (
-                    value.get("name")
-                    or value.get("full_name")
-                    or value.get("display_name")
-                    or value.get("title")
-                )
-                if local_name and _looks_like_context(path):
+                local_name = value.get("name") or value.get("full_name") or value.get("display_name")
+                if local_name:
                     _add_name(local_name)
-                if value.get("email") and _looks_like_context(path):
+                if value.get("email"):
                     _add_name(value.get("email"))
-                if value.get("id") is not None and _looks_like_context(path):
-                    _add_id(value.get("id"))
+                for id_key in id_keys:
+                    if value.get(id_key) is not None and _looks_like_context(path):
+                        _add_id(value.get(id_key))
                 for k, v in value.items():
                     next_path = f"{path}.{k}" if path else str(k)
                     _walk(v, next_path)
@@ -1716,19 +1713,77 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 if mapped_name:
                     _add_name(mapped_name)
         return found_names, found_ids
+
+    def _extract_linked_event_ids_from_person(person_row):
+        linked_ids = set()
+        context_tokens = ("event", "attend", "session", "activity", "retreat", "walk", "booking")
+        id_keys = ("id", "event_id", "activity_id", "session_id")
+
+        def _in_context(path):
+            p = str(path).lower()
+            return any(t in p for t in context_tokens)
+
+        def _walk(value, path=""):
+            if value is None:
+                return
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    next_path = f"{path}.{k}" if path else str(k)
+                    if k in id_keys and _in_context(path):
+                        if v is not None and str(v).strip():
+                            linked_ids.add(str(v).strip())
+                    _walk(v, next_path)
+                return
+            if isinstance(value, list):
+                for idx, item in enumerate(value):
+                    _walk(item, f"{path}[{idx}]")
+                return
+            if isinstance(value, (int, float)):
+                if _in_context(path):
+                    linked_ids.add(str(int(value)))
+                return
+            if isinstance(value, str):
+                if _in_context(path):
+                    parts = [x.strip() for x in value.replace("\n", ",").replace(";", ",").split(",")]
+                    for part in parts:
+                        if part:
+                            linked_ids.add(part)
+
+        _walk(person_row)
+        return linked_ids
     
     walks_delivered = 0
     participants = 0
     delivery_event_count = 0
     delivery_events = []
     event_type_counts = {}
+    people_by_event_id = {}
+    for p in region_people:
+        p_name = _get_row_value(p, "name", "full_name", "Display Name", "email") or p.get("id")
+        if not p_name:
+            continue
+        linked_event_ids = _extract_linked_event_ids_from_person(p)
+        for linked_id in linked_event_ids:
+            if linked_id not in people_by_event_id:
+                people_by_event_id[linked_id] = []
+            if str(p_name) not in people_by_event_id[linked_id]:
+                people_by_event_id[linked_id].append(str(p_name))
     for e in region_events:
         e_type = _event_type(e)
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
             walks_delivered += 1
             delivery_event_count += 1
             participant_list, participant_ids = _extract_participant_refs(e)
-            event_participants = max(_event_attendees(e), len(participant_list))
+            event_id = str(e.get("id")) if e.get("id") is not None else ""
+            linked_people = people_by_event_id.get(event_id, [])
+            if linked_people:
+                seen_names = set(str(x).strip().lower() for x in participant_list)
+                for lp in linked_people:
+                    lp_norm = str(lp).strip().lower()
+                    if lp_norm and lp_norm not in seen_names:
+                        participant_list.append(lp)
+                        seen_names.add(lp_norm)
+            event_participants = max(_event_attendees(e), len(participant_list), len(participant_ids))
             participants += event_participants
             event_type_label = e_type.title() if e_type else "Unknown Event Type"
             event_type_counts[event_type_label] = event_type_counts.get(event_type_label, 0) + 1
@@ -1741,6 +1796,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 "region": ", ".join(_to_list(e.get("c_region"))),
                 "participant_list": participant_list,
                 "participant_ids": participant_ids,
+                "raw_event": e,
             })
 
     # Fallback: if event labels are inconsistent, treat all region events as delivered.
