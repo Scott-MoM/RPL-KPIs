@@ -264,6 +264,18 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
         endpoint_started = time.time()
         datasets[dataset_key] = fetch_all(endpoint, beacon_key, account_id, base_url=beacon_base_url)
         fetch_breakdown_ms[dataset_key] = int((time.time() - endpoint_started) * 1000)
+
+    # Optional direct attendee source (preferred for participant drill-down).
+    datasets["event_attendees"] = []
+    attendee_endpoint_candidates = ["event_attendee", "event_attendees", "attendance", "event_attendance"]
+    attendee_fetch_started = time.time()
+    for endpoint in attendee_endpoint_candidates:
+        try:
+            datasets["event_attendees"] = fetch_all(endpoint, beacon_key, account_id, base_url=beacon_base_url)
+            break
+        except Exception:
+            continue
+    fetch_breakdown_ms["event_attendees"] = int((time.time() - attendee_fetch_started) * 1000)
     fetch_duration_ms = int((time.time() - fetch_started) * 1000)
 
     transform_started = time.time()
@@ -272,21 +284,106 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
         for e in [extract_entity(p) for p in datasets["people"]]
         if e.get("id")
     ]
+    people_name_by_id = {}
+    for p in people_rows:
+        payload = p.get("payload") or {}
+        pid = payload.get("id")
+        if pid is None:
+            continue
+        pname = (
+            payload.get("name")
+            or payload.get("full_name")
+            or payload.get("display_name")
+            or payload.get("email")
+            or pid
+        )
+        people_name_by_id[str(pid)] = str(pname).strip()
     org_rows = [
         {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
         for e in [extract_entity(o) for o in datasets["organisations"]]
         if e.get("id")
     ]
-    event_rows = [
-        {
-            "id": x.get("id"),
-            "payload": x,
-            "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
-            "region": (x.get("c_region") or [x.get("region")] or [None])[0],
-        }
-        for x in [extract_entity(e) for e in datasets["events"]]
-        if x.get("id")
-    ]
+    attendee_map = {}
+
+    def _row_value(row, *keys):
+        for k in keys:
+            if isinstance(row, dict) and row.get(k) not in [None, ""]:
+                return row.get(k)
+        return None
+
+    def _att_event_id(att):
+        direct = _row_value(att, "event_id", "eventId", "event")
+        if isinstance(direct, dict):
+            direct = direct.get("id")
+        if direct not in [None, ""]:
+            return str(direct)
+        rel = att.get("relationships") if isinstance(att, dict) else None
+        if isinstance(rel, dict):
+            for key in ("event", "events", "activity", "session"):
+                ref = rel.get(key)
+                if isinstance(ref, dict):
+                    data = ref.get("data")
+                    if isinstance(data, dict) and data.get("id") not in [None, ""]:
+                        return str(data.get("id"))
+                    if ref.get("id") not in [None, ""]:
+                        return str(ref.get("id"))
+        return None
+
+    def _att_person_id(att):
+        direct = _row_value(att, "person_id", "contact_id", "participant_id", "person", "contact", "participant")
+        if isinstance(direct, dict):
+            direct = direct.get("id")
+        if direct not in [None, ""]:
+            return str(direct)
+        rel = att.get("relationships") if isinstance(att, dict) else None
+        if isinstance(rel, dict):
+            for key in ("person", "people", "contact", "participant"):
+                ref = rel.get(key)
+                if isinstance(ref, dict):
+                    data = ref.get("data")
+                    if isinstance(data, dict) and data.get("id") not in [None, ""]:
+                        return str(data.get("id"))
+                    if ref.get("id") not in [None, ""]:
+                        return str(ref.get("id"))
+        return None
+
+    for row in datasets.get("event_attendees") or []:
+        att = extract_entity(row)
+        eid = _att_event_id(att)
+        if not eid:
+            continue
+        pid = _att_person_id(att)
+        name = _row_value(att, "name", "full_name", "display_name", "participant_name", "attendee_name", "person_name", "email")
+        if (not name) and pid:
+            name = people_name_by_id.get(str(pid))
+        bucket = attendee_map.setdefault(eid, {"names": set(), "ids": set()})
+        if pid:
+            bucket["ids"].add(str(pid))
+        if name:
+            bucket["names"].add(str(name).strip())
+
+    event_rows = []
+    for x in [extract_entity(e) for e in datasets["events"]]:
+        if not x.get("id"):
+            continue
+        eid = str(x.get("id"))
+        bucket = attendee_map.get(eid, {"names": set(), "ids": set()})
+        names = sorted([n for n in bucket["names"] if n])
+        ids = sorted([i for i in bucket["ids"] if i])
+        if names:
+            x["participant_list"] = names
+        if ids:
+            x["participant_ids"] = ids
+        if not x.get("number_of_attendees"):
+            x["number_of_attendees"] = max(len(names), len(ids))
+        event_rows.append(
+            {
+                "id": x.get("id"),
+                "payload": x,
+                "start_date": x.get("start_date") or x.get("date") or x.get("created_at"),
+                "region": (x.get("c_region") or [x.get("region")] or [None])[0],
+            }
+        )
 
     payment_entities = {}
     for p in datasets["payments"]:
