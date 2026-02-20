@@ -809,6 +809,140 @@ def _extract_entity(record):
         return entity
     return record
 
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_live_event_attendees(event_id):
+    target = str(event_id).strip()
+    if not target:
+        return {"names": [], "ids": [], "endpoint": None}
+
+    beacon_key = _get_secret_or_env("BEACON_API_KEY")
+    beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
+    beacon_account_id = _get_secret_or_env("BEACON_ACCOUNT_ID")
+    if not beacon_key:
+        return {"names": [], "ids": [], "endpoint": None}
+
+    def _id_key(value):
+        if value is None:
+            return ""
+        s = str(value).strip().lower()
+        if not s:
+            return ""
+        if "/" in s:
+            s = s.rstrip("/").split("/")[-1]
+        if ":" in s:
+            s = s.split(":")[-1]
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if len(digits) >= 4:
+            return digits
+        return "".join(ch for ch in s if ch.isalnum())
+
+    target_key = _id_key(target)
+    headers = {
+        "Authorization": f"Bearer {beacon_key}",
+        "Content-Type": "application/json",
+        "Beacon-Application": "developer_api",
+    }
+    endpoint_candidates = [
+        _get_secret_or_env("BEACON_EVENT_ATTENDEES_ENDPOINT"),
+        "event_attendee",
+        "event_attendees",
+        "event_attendance",
+        "event_attendances",
+        "attendance",
+        "attendees",
+        "event-registration",
+        "event_registrations",
+    ]
+    endpoint_candidates = [e for e in endpoint_candidates if e]
+
+    def _attendee_event_id(att):
+        direct = _get_row_value(att, "event_id", "eventId", "event")
+        if isinstance(direct, dict):
+            direct = direct.get("id")
+        if direct not in [None, ""]:
+            return direct
+        rel = att.get("relationships") if isinstance(att, dict) else None
+        if isinstance(rel, dict):
+            for key in ("event", "events", "activity", "session"):
+                ref = rel.get(key)
+                if isinstance(ref, dict):
+                    data = ref.get("data")
+                    if isinstance(data, dict) and data.get("id") not in [None, ""]:
+                        return data.get("id")
+                    if ref.get("id") not in [None, ""]:
+                        return ref.get("id")
+        return None
+
+    def _attendee_name(att):
+        name = _get_row_value(
+            att,
+            "name",
+            "full_name",
+            "display_name",
+            "participant_name",
+            "attendee_name",
+            "person_name",
+            "contact_name",
+            "email",
+        )
+        if name:
+            return str(name).strip()
+        person = att.get("person") if isinstance(att, dict) else None
+        if isinstance(person, dict):
+            return str(_get_row_value(person, "name", "full_name", "display_name", "email") or "").strip()
+        contact = att.get("contact") if isinstance(att, dict) else None
+        if isinstance(contact, dict):
+            return str(_get_row_value(contact, "name", "full_name", "display_name", "email") or "").strip()
+        return ""
+
+    found_names = []
+    found_ids = []
+    seen_names = set()
+    seen_ids = set()
+    for endpoint in endpoint_candidates:
+        try:
+            url = _build_beacon_url(beacon_base_url, beacon_account_id, endpoint)
+            for page in range(1, 11):
+                params = {
+                    "page": page,
+                    "per_page": 100,
+                    "sort_by": "created_at",
+                    "sort_direction": "desc",
+                    "event_id": target,
+                }
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+                if resp.status_code >= 400:
+                    break
+                payload = resp.json()
+                rows = _extract_result_list(payload)
+                if not rows:
+                    break
+                for raw in rows:
+                    att = _extract_entity(raw)
+                    att_event_id = _attendee_event_id(att)
+                    if _id_key(att_event_id) != target_key:
+                        continue
+                    pid = _get_row_value(att, "person_id", "participant_id", "contact_id", "id")
+                    if pid is not None:
+                        p = str(pid).strip()
+                        if p and p not in seen_ids:
+                            seen_ids.add(p)
+                            found_ids.append(p)
+                    n = _attendee_name(att)
+                    if n:
+                        nk = n.lower()
+                        if nk not in seen_names:
+                            seen_names.add(nk)
+                            found_names.append(n)
+                if len(rows) < 100:
+                    break
+            if found_names or found_ids:
+                return {"names": found_names, "ids": found_ids, "endpoint": endpoint}
+        except Exception:
+            continue
+
+    return {"names": found_names, "ids": found_ids, "endpoint": None}
+
 def _extract_region_tags(record):
     candidates = []
     for key in (
@@ -3535,6 +3669,15 @@ def main_dashboard():
                         participant_list = selected_event.get("participant_list") or []
                         participant_ids = selected_event.get("participant_ids") or []
                         participant_count = _coerce_int(selected_event.get("participants"))
+                        if not participant_list:
+                            with st.spinner("Checking live attendee feed for this event..."):
+                                live = fetch_live_event_attendees(selected_event.get("id"))
+                            if live.get("names"):
+                                participant_list = live.get("names") or []
+                                participant_ids = (participant_ids or []) + (live.get("ids") or [])
+                                endpoint_used = live.get("endpoint")
+                                if endpoint_used:
+                                    st.caption(f"Live attendee source used: {endpoint_used}")
                         attendee_status = "Count only (no attendee names available)"
                         if participant_list:
                             attendee_status = "Attendee names available"
