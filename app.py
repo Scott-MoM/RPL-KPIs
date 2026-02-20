@@ -1602,8 +1602,66 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         ):
             val = event_row.get(key)
             if val is not None and str(val).strip():
+                if isinstance(val, list):
+                    return len(val)
+                if isinstance(val, dict):
+                    for count_key in ("count", "total", "value", "participants", "attendees"):
+                        if val.get(count_key) is not None and str(val.get(count_key)).strip():
+                            return _to_int(val.get(count_key))
                 return _to_int(val)
         return 0
+
+    def _extract_participant_list(event_row):
+        participant_keys = (
+            "participant_list",
+            "participants_list",
+            "participants",
+            "attendees",
+            "attendee_list",
+            "attendees_list",
+            "people",
+            "participant_names",
+            "attendee_names",
+            "contacts",
+        )
+        found = []
+        seen = set()
+        for key in participant_keys:
+            val = event_row.get(key)
+            if val is None:
+                continue
+            items = []
+            if isinstance(val, list):
+                items = val
+            elif isinstance(val, str):
+                raw = [x.strip() for x in val.replace("\n", ",").replace(";", ",").split(",")]
+                items = [x for x in raw if x]
+            elif isinstance(val, dict):
+                for nested_key in ("items", "results", "data", "participants", "attendees"):
+                    if isinstance(val.get(nested_key), list):
+                        items = val.get(nested_key)
+                        break
+            for item in items:
+                if isinstance(item, dict):
+                    name = (
+                        item.get("name")
+                        or item.get("full_name")
+                        or item.get("display_name")
+                        or item.get("title")
+                        or item.get("email")
+                        or item.get("id")
+                    )
+                    candidate = str(name).strip() if name is not None else ""
+                else:
+                    candidate = str(item).strip()
+                if not candidate:
+                    continue
+                candidate_norm = candidate.lower()
+                if candidate_norm in seen:
+                    continue
+                seen.add(candidate_norm)
+                found.append(candidate)
+        return found
     
     walks_delivered = 0
     participants = 0
@@ -1615,7 +1673,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
             walks_delivered += 1
             delivery_event_count += 1
-            event_participants = _event_attendees(e)
+            participant_list = _extract_participant_list(e)
+            event_participants = max(_event_attendees(e), len(participant_list))
             participants += event_participants
             event_type_label = e_type.title() if e_type else "Unknown Event Type"
             event_type_counts[event_type_label] = event_type_counts.get(event_type_label, 0) + 1
@@ -1626,6 +1685,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 "date": e.get("start_date") or e.get("date") or e.get("created_at"),
                 "name": _get_row_value(e, "name", "title", "Event name", "Description") or e.get("id"),
                 "region": ", ".join(_to_list(e.get("c_region"))),
+                "participant_list": participant_list,
             })
 
     # Fallback: if event labels are inconsistent, treat all region events as delivered.
@@ -2941,7 +3001,7 @@ def main_dashboard():
     def _render_deep_drilldown(rows, label_getter, key, empty_msg="No records available for deeper drill-down."):
         if not rows:
             st.caption(empty_msg)
-            return
+            return None
         labels = []
         for i, row in enumerate(rows):
             try:
@@ -2960,6 +3020,7 @@ def main_dashboard():
         )
         st.caption(f"Selected: {labels[selected_idx]}")
         st.json(rows[selected_idx], expanded=True)
+        return rows[selected_idx]
     
 
     # Tabs
@@ -3129,12 +3190,20 @@ def main_dashboard():
                         st.caption("No delivery-tagged event rows found for this filtered period.")
                     else:
                         _show_df_limited(delivery_df, key="tbl_del_participants")
-                    _render_deep_drilldown(
+                    selected_event = _render_deep_drilldown(
                         delivery_events,
                         lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
                         key="dd_del_participants",
                         empty_msg="No event source rows found for deeper drill-down.",
                     )
+                    if selected_event:
+                        participant_list = selected_event.get("participant_list") or []
+                        st.markdown("**Participants in selected event**")
+                        if participant_list:
+                            participants_df = pd.DataFrame({"Participant": participant_list})
+                            _show_df_limited(participants_df, key="tbl_del_participants_list", default_limit=250)
+                        else:
+                            st.caption("No participant names are available for this event in the current source data.")
         with m3:
             with st.popover(
                 f"Bursary Participants\n{data['delivery']['bursary_participants']}",
