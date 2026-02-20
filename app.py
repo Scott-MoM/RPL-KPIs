@@ -3538,6 +3538,12 @@ def main_dashboard():
                         participant_list = selected_event.get("participant_list") or []
                         participant_ids = selected_event.get("participant_ids") or []
                         participant_count = _coerce_int(selected_event.get("participants"))
+                        attendee_status = "Count only (no attendee names available)"
+                        if participant_list:
+                            attendee_status = "Attendee names available"
+                        elif participant_ids:
+                            attendee_status = "Attendee IDs available (names unavailable)"
+                        st.caption(f"Attendee source status: {attendee_status}")
                         st.markdown("**Participants in selected event**")
                         if participant_list:
                             participants_df = pd.DataFrame({"Participant": participant_list})
