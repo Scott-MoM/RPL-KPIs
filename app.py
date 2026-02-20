@@ -1611,7 +1611,15 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 return _to_int(val)
         return 0
 
-    def _extract_participant_list(event_row):
+    people_name_by_id = {}
+    for person_row in people:
+        pid = person_row.get("id")
+        if pid is None:
+            continue
+        p_name = _get_row_value(person_row, "name", "full_name", "Display Name", "email") or pid
+        people_name_by_id[str(pid)] = str(p_name).strip()
+
+    def _extract_participant_refs(event_row):
         participant_keys = (
             "participant_list",
             "participants_list",
@@ -1623,45 +1631,81 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "participant_names",
             "attendee_names",
             "contacts",
+            "relationships",
         )
-        found = []
-        seen = set()
+        found_names = []
+        found_ids = []
+        seen_names = set()
+        seen_ids = set()
+        context_tokens = ("participant", "attendee", "people", "contact", "person", "member")
+
+        def _add_name(value):
+            candidate = str(value).strip()
+            if not candidate:
+                return
+            key = candidate.lower()
+            if key in seen_names:
+                return
+            seen_names.add(key)
+            found_names.append(candidate)
+
+        def _add_id(value):
+            candidate = str(value).strip()
+            if not candidate:
+                return
+            if candidate in seen_ids:
+                return
+            seen_ids.add(candidate)
+            found_ids.append(candidate)
+
+        def _looks_like_context(path):
+            path_l = str(path).lower()
+            return any(t in path_l for t in context_tokens)
+
+        def _walk(value, path=""):
+            if value is None:
+                return
+            if isinstance(value, dict):
+                local_name = (
+                    value.get("name")
+                    or value.get("full_name")
+                    or value.get("display_name")
+                    or value.get("title")
+                )
+                if local_name and _looks_like_context(path):
+                    _add_name(local_name)
+                if value.get("email") and _looks_like_context(path):
+                    _add_name(value.get("email"))
+                if value.get("id") is not None and _looks_like_context(path):
+                    _add_id(value.get("id"))
+                for k, v in value.items():
+                    next_path = f"{path}.{k}" if path else str(k)
+                    _walk(v, next_path)
+                return
+            if isinstance(value, list):
+                for idx, item in enumerate(value):
+                    next_path = f"{path}[{idx}]"
+                    _walk(item, next_path)
+                return
+            if isinstance(value, str):
+                if _looks_like_context(path):
+                    raw = [x.strip() for x in value.replace("\n", ",").replace(";", ",").split(",")]
+                    for token in raw:
+                        if token:
+                            _add_name(token)
+
         for key in participant_keys:
             val = event_row.get(key)
             if val is None:
                 continue
-            items = []
-            if isinstance(val, list):
-                items = val
-            elif isinstance(val, str):
-                raw = [x.strip() for x in val.replace("\n", ",").replace(";", ",").split(",")]
-                items = [x for x in raw if x]
-            elif isinstance(val, dict):
-                for nested_key in ("items", "results", "data", "participants", "attendees"):
-                    if isinstance(val.get(nested_key), list):
-                        items = val.get(nested_key)
-                        break
-            for item in items:
-                if isinstance(item, dict):
-                    name = (
-                        item.get("name")
-                        or item.get("full_name")
-                        or item.get("display_name")
-                        or item.get("title")
-                        or item.get("email")
-                        or item.get("id")
-                    )
-                    candidate = str(name).strip() if name is not None else ""
-                else:
-                    candidate = str(item).strip()
-                if not candidate:
-                    continue
-                candidate_norm = candidate.lower()
-                if candidate_norm in seen:
-                    continue
-                seen.add(candidate_norm)
-                found.append(candidate)
-        return found
+            _walk(val, key)
+
+        if found_ids:
+            for pid in found_ids:
+                mapped_name = people_name_by_id.get(str(pid))
+                if mapped_name:
+                    _add_name(mapped_name)
+        return found_names, found_ids
     
     walks_delivered = 0
     participants = 0
@@ -1673,7 +1717,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
             walks_delivered += 1
             delivery_event_count += 1
-            participant_list = _extract_participant_list(e)
+            participant_list, participant_ids = _extract_participant_refs(e)
             event_participants = max(_event_attendees(e), len(participant_list))
             participants += event_participants
             event_type_label = e_type.title() if e_type else "Unknown Event Type"
@@ -1686,6 +1730,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 "name": _get_row_value(e, "name", "title", "Event name", "Description") or e.get("id"),
                 "region": ", ".join(_to_list(e.get("c_region"))),
                 "participant_list": participant_list,
+                "participant_ids": participant_ids,
             })
 
     # Fallback: if event labels are inconsistent, treat all region events as delivered.
@@ -3198,10 +3243,15 @@ def main_dashboard():
                     )
                     if selected_event:
                         participant_list = selected_event.get("participant_list") or []
+                        participant_ids = selected_event.get("participant_ids") or []
                         st.markdown("**Participants in selected event**")
                         if participant_list:
                             participants_df = pd.DataFrame({"Participant": participant_list})
                             _show_df_limited(participants_df, key="tbl_del_participants_list", default_limit=250)
+                        elif participant_ids:
+                            ids_df = pd.DataFrame({"Participant ID": participant_ids})
+                            _show_df_limited(ids_df, key="tbl_del_participants_ids", default_limit=250)
+                            st.caption("Participant IDs found but names are not available in the current source rows.")
                         else:
                             st.caption("No participant names are available for this event in the current source data.")
         with m3:
