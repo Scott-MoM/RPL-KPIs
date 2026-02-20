@@ -297,6 +297,11 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
         for e in [extract_entity(p) for p in datasets["people"]]
         if e.get("id")
     ]
+    def _id_key(value):
+        if value is None:
+            return ""
+        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
     people_name_by_id = {}
     for p in people_rows:
         payload = p.get("payload") or {}
@@ -310,7 +315,7 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
             or payload.get("email")
             or pid
         )
-        people_name_by_id[str(pid)] = str(pname).strip()
+        people_name_by_id[_id_key(pid)] = str(pname).strip()
     org_rows = [
         {"id": e.get("id"), "payload": e, "created_at": e.get("created_at")}
         for e in [extract_entity(o) for o in datasets["organisations"]]
@@ -404,12 +409,16 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
                 pid = sorted(person_ids, key=lambda x: len(str(x)))[0]
         name = _row_value(att, "name", "full_name", "display_name", "participant_name", "attendee_name", "person_name", "email")
         if (not name) and pid:
-            name = people_name_by_id.get(str(pid))
+            name = people_name_by_id.get(_id_key(pid))
         bucket = attendee_map.setdefault(eid, {"names": set(), "ids": set()})
+        norm_eid = _id_key(eid)
+        bucket_norm = attendee_map.setdefault(norm_eid, {"names": set(), "ids": set()}) if norm_eid else bucket
         if pid:
             bucket["ids"].add(str(pid))
+            bucket_norm["ids"].add(str(pid))
         if name:
             bucket["names"].add(str(name).strip())
+            bucket_norm["names"].add(str(name).strip())
 
     event_rows = []
     for x in [extract_entity(e) for e in datasets["events"]]:
@@ -417,6 +426,8 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
             continue
         eid = str(x.get("id"))
         bucket = attendee_map.get(eid, {"names": set(), "ids": set()})
+        if not bucket["names"] and not bucket["ids"]:
+            bucket = attendee_map.get(_id_key(eid), {"names": set(), "ids": set()})
         names = sorted([n for n in bucket["names"] if n])
         ids = sorted([i for i in bucket["ids"] if i])
         if names:

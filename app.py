@@ -1738,13 +1738,18 @@ def compute_kpis(region, people, organisations, events, payments, grants):
                 return _to_int(val)
         return 0
 
+    def _id_key(value):
+        if value is None:
+            return ""
+        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
     people_name_by_id = {}
     for person_row in people:
         pid = person_row.get("id")
         if pid is None:
             continue
         p_name = _get_row_value(person_row, "name", "full_name", "Display Name", "email") or pid
-        people_name_by_id[str(pid)] = str(p_name).strip()
+        people_name_by_id[_id_key(pid)] = str(p_name).strip()
 
     def _extract_participant_refs(event_row):
         participant_keys = (
@@ -1826,7 +1831,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
 
         if found_ids:
             for pid in found_ids:
-                mapped_name = people_name_by_id.get(str(pid))
+                mapped_name = people_name_by_id.get(_id_key(pid))
                 if mapped_name:
                     _add_name(mapped_name)
         return found_names, found_ids
@@ -1881,10 +1886,11 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             continue
         linked_event_ids = _extract_linked_event_ids_from_person(p)
         for linked_id in linked_event_ids:
-            if linked_id not in people_by_event_id:
-                people_by_event_id[linked_id] = []
-            if str(p_name) not in people_by_event_id[linked_id]:
-                people_by_event_id[linked_id].append(str(p_name))
+            key = _id_key(linked_id)
+            if key not in people_by_event_id:
+                people_by_event_id[key] = []
+            if str(p_name) not in people_by_event_id[key]:
+                people_by_event_id[key].append(str(p_name))
     for e in region_events:
         e_type = _event_type(e)
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
@@ -1892,7 +1898,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             delivery_event_count += 1
             participant_list, participant_ids = _extract_participant_refs(e)
             event_id = str(e.get("id")) if e.get("id") is not None else ""
-            linked_people = people_by_event_id.get(event_id, [])
+            linked_people = people_by_event_id.get(_id_key(event_id), [])
             if linked_people:
                 seen_names = set(str(x).strip().lower() for x in participant_list)
                 for lp in linked_people:
