@@ -1580,6 +1580,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     participants = 0
     delivery_event_count = 0
     delivery_events = []
+    event_type_counts = {}
     for e in region_events:
         e_type = _event_type(e)
         if any(x in e_type for x in ['walk', 'retreat', 'delivery', 'session', 'hike', 'trek']):
@@ -1587,6 +1588,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             delivery_event_count += 1
             event_participants = _event_attendees(e)
             participants += event_participants
+            event_type_label = e_type.title() if e_type else "Unknown Event Type"
+            event_type_counts[event_type_label] = event_type_counts.get(event_type_label, 0) + 1
             delivery_events.append({
                 "id": e.get("id"),
                 "type": e_type,
@@ -1600,6 +1603,38 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     if walks_delivered == 0 and region_events:
         walks_delivered = len(region_events)
         participants = sum(_event_attendees(e) for e in region_events)
+
+    # Delivery demographics from currently available fields.
+    # Priority 1: people type tags (closest to participant cohorts)
+    # Priority 2: event type split (delivery segmentation fallback)
+    demographic_keyword_map = {
+        "Men": ["men", "male"],
+        "Women": ["women", "female"],
+        "Young Adults": ["young adult", "young people", "youth"],
+        "Carers": ["carer", "caregiver"],
+        "Veterans": ["veteran"],
+        "Ethnic Minorities": ["ethnic minority", "minority ethnic", "bame", "global majority"],
+        "Parents": ["parent", "mum", "dad"],
+    }
+    people_tag_demographics = {}
+    for p in region_people:
+        person_tags = [str(t).lower() for t in _to_list(p.get("type"))]
+        if not person_tags:
+            continue
+        person_text = " | ".join(person_tags)
+        for label, keywords in demographic_keyword_map.items():
+            if any(k in person_text for k in keywords):
+                people_tag_demographics[label] = people_tag_demographics.get(label, 0) + 1
+
+    if people_tag_demographics:
+        delivery_demographics = people_tag_demographics
+        delivery_demographics_source = "people_type_tags"
+    elif event_type_counts:
+        delivery_demographics = event_type_counts
+        delivery_demographics_source = "event_type_split"
+    else:
+        delivery_demographics = {"General": participants if participants > 0 else 1}
+        delivery_demographics_source = "fallback"
 
     return {
         "region": region,
@@ -1620,7 +1655,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "participants": participants,
             "bursary_participants": 0, 
             "wellbeing_change_score": 0,
-            "demographics": {"General": participants if participants > 0 else 1} 
+            "demographics": delivery_demographics,
+            "demographics_source": delivery_demographics_source,
         },
         "income": {
             "bids_submitted": bids_submitted,
@@ -3086,8 +3122,21 @@ def main_dashboard():
         
         st.subheader("Demographics")
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
-        fig_pie = px.pie(df_demo, values='Count', names='Group', title="Representation from Groups")
+        demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
+        if demo_source == "people_type_tags":
+            demo_title = "Participant Cohorts (from people type tags)"
+        elif demo_source == "event_type_split":
+            demo_title = "Delivery Split (by event type)"
+        else:
+            demo_title = "Representation from Available Data"
+        fig_pie = px.pie(df_demo, values='Count', names='Group', title=demo_title)
         st.plotly_chart(fig_pie)
+        if demo_source == "people_type_tags":
+            st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
+        elif demo_source == "event_type_split":
+            st.caption("No participant cohort tags found; chart falls back to event type split.")
+        else:
+            st.caption("Limited demographic fields currently available; chart uses fallback data.")
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- D. Income ---
