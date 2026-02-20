@@ -1410,7 +1410,12 @@ def add_case_study(title, content, region, study_date=None):
             "date_added": date_added
         })
         save_local_json(CASE_STUDIES_FILE, studies)
+    try:
+        get_case_studies.clear()
+    except Exception:
+        pass
 
+@st.cache_data(show_spinner=False, ttl=120)
 def get_case_studies(region_filter=None, start_date=None, end_date=None):
     if DB_TYPE == 'supabase':
         try:
@@ -1448,7 +1453,6 @@ def get_case_studies(region_filter=None, start_date=None, end_date=None):
 
 # --- BEACON CRM INTEGRATION (LIVE) ---
 
-@st.cache_data(show_spinner=False, ttl=300)
 def compute_kpis(region, people, organisations, events, payments, grants):
     # 2. Filter Helpers
     def get_region_tags(record):
@@ -1695,6 +1699,7 @@ def get_mock_data(region):
         }
     }
 
+@st.cache_data(show_spinner=False, ttl=300)
 def fetch_supabase_data(region, start_date=None, end_date=None):
     if DB_TYPE != 'supabase':
         return None
@@ -1775,6 +1780,7 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
     result["_source"] = "supabase"
     return result
 
+@st.cache_data(show_spinner=False, ttl=120)
 def get_last_refresh_timestamp():
     if DB_TYPE != 'supabase':
         return None
@@ -2851,6 +2857,21 @@ def main_dashboard():
             out.append(row_out)
         return pd.DataFrame(out)
 
+    def _details_enabled(key, label="Load drill-down details"):
+        return st.checkbox(label, key=key, value=False)
+
+    def _show_df_limited(df, key, default_limit=150):
+        if df is None or df.empty:
+            st.caption("No rows found for this selection.")
+            return
+        total_rows = len(df)
+        show_all = st.checkbox(f"Show all rows ({total_rows})", key=f"{key}_show_all", value=False)
+        if show_all or total_rows <= default_limit:
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(df.head(default_limit), use_container_width=True, hide_index=True)
+            st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
+
     def _render_deep_drilldown(rows, label_getter, key, empty_msg="No records available for deeper drill-down."):
         if not rows:
             st.caption(empty_msg)
@@ -2890,61 +2911,63 @@ def main_dashboard():
                 use_container_width=True,
             ):
                 st.caption("Derived from steering volunteer tags in current filtered data.")
-                _render_deep_drilldown(
-                    raw_kpi.get("steering_volunteers") or [],
-                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                    key="dd_gov_steering_active",
-                    empty_msg="No steering source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_gov_steering_active"):
+                    _render_deep_drilldown(
+                        raw_kpi.get("steering_volunteers") or [],
+                        lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                        key="dd_gov_steering_active",
+                        empty_msg="No steering source rows found for deeper drill-down.",
+                    )
         with c2:
             with st.popover(
                 f"Active Volunteers\n{data['governance']['steering_members']}",
                 use_container_width=True,
             ):
-                steering_df = _rows_to_df(
-                    raw_kpi.get("steering_volunteers") or [],
-                    {
-                        "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                        "Type": lambda r: ", ".join(_to_list(r.get("type"))),
-                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                        "Created": lambda r: r.get("created_at"),
-                    },
-                )
-                if steering_df.empty:
-                    st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
-                else:
-                    st.dataframe(steering_df, use_container_width=True, hide_index=True)
-                _render_deep_drilldown(
-                    raw_kpi.get("steering_volunteers") or [],
-                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                    key="dd_gov_steering_members",
-                    empty_msg="No steering source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_gov_steering_members"):
+                    steering_df = _rows_to_df(
+                        raw_kpi.get("steering_volunteers") or [],
+                        {
+                            "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                            "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                            "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                            "Created": lambda r: r.get("created_at"),
+                        },
+                    )
+                    if steering_df.empty:
+                        st.caption("No steering-tagged volunteers found; this metric may use volunteer proxy logic.")
+                    else:
+                        _show_df_limited(steering_df, key="tbl_gov_steering_members")
+                    _render_deep_drilldown(
+                        raw_kpi.get("steering_volunteers") or [],
+                        lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                        key="dd_gov_steering_members",
+                        empty_msg="No steering source rows found for deeper drill-down.",
+                    )
         with c3:
             with st.popover(
                 f"New Volunteers\n{data['governance']['volunteers_new']}",
                 use_container_width=True,
             ):
-                volunteers_df = _rows_to_df(
-                    raw_kpi.get("volunteers") or [],
-                    {
-                        "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                        "Type": lambda r: ", ".join(_to_list(r.get("type"))),
-                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                        "Created": lambda r: r.get("created_at"),
-                    },
-                )
-                st.dataframe(
-                    volunteers_df if not volunteers_df.empty else pd.DataFrame(columns=["Name", "Type", "Region", "Created"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                _render_deep_drilldown(
-                    raw_kpi.get("volunteers") or [],
-                    lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
-                    key="dd_gov_new_volunteers",
-                    empty_msg="No volunteer source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_gov_new_volunteers"):
+                    volunteers_df = _rows_to_df(
+                        raw_kpi.get("volunteers") or [],
+                        {
+                            "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                            "Type": lambda r: ", ".join(_to_list(r.get("type"))),
+                            "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                            "Created": lambda r: r.get("created_at"),
+                        },
+                    )
+                    if volunteers_df.empty:
+                        st.caption("No volunteer rows found for this selection.")
+                    else:
+                        _show_df_limited(volunteers_df, key="tbl_gov_new_volunteers")
+                    _render_deep_drilldown(
+                        raw_kpi.get("volunteers") or [],
+                        lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
+                        key="dd_gov_new_volunteers",
+                        empty_msg="No volunteer source rows found for deeper drill-down.",
+                    )
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- B. Partnerships ---
@@ -2968,26 +2991,26 @@ def main_dashboard():
                 use_container_width=True,
             ):
                 st.markdown("**List of Organisations**")
-                org_df = _rows_to_df(
-                    raw_kpi.get("region_orgs") or [],
-                    {
-                        "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                        "Type": lambda r: str(r.get("type") or ""),
-                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                        "Created": lambda r: r.get("created_at"),
-                    },
-                )
-                st.dataframe(
-                    org_df if not org_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                _render_deep_drilldown(
-                    raw_kpi.get("region_orgs") or [],
-                    lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                    key="dd_part_active_orgs",
-                    empty_msg="No organisation source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_part_active_orgs"):
+                    org_df = _rows_to_df(
+                        raw_kpi.get("region_orgs") or [],
+                        {
+                            "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                            "Type": lambda r: str(r.get("type") or ""),
+                            "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                            "Created": lambda r: r.get("created_at"),
+                        },
+                    )
+                    if org_df.empty:
+                        st.caption("No organisation rows found for this selection.")
+                    else:
+                        _show_df_limited(org_df, key="tbl_part_active_orgs")
+                    _render_deep_drilldown(
+                        raw_kpi.get("region_orgs") or [],
+                        lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                        key="dd_part_active_orgs",
+                        empty_msg="No organisation source rows found for deeper drill-down.",
+                    )
         with c2:
             with st.popover(
                 f"Network Memberships\n{data['partnerships']['networks_sat_on']}",
@@ -3008,43 +3031,44 @@ def main_dashboard():
                 use_container_width=True,
             ):
                 st.markdown("**List of Attendees by Event**")
-                delivery_events = raw_kpi.get("delivery_events") or []
-                attendees_rows = []
-                for e in delivery_events:
-                    attendees_rows.append({
-                        "Event": _get_row_value(e, "name", "title", "event_name", "Display Name") or e.get("id"),
-                        "Date": _get_row_value(e, "start_date", "date", "created_at"),
-                        "Attendees": _coerce_int(_get_row_value(e, "number_of_attendees", "Number of attendees", "attendees", "participant_count")),
-                    })
-                attendees_df = pd.DataFrame(attendees_rows)
-                st.dataframe(
-                    attendees_df if not attendees_df.empty else pd.DataFrame(columns=["Event", "Date", "Attendees"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                _render_deep_drilldown(
-                    delivery_events,
-                    lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
-                    key="dd_del_events",
-                    empty_msg="No event source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_del_events"):
+                    delivery_events = raw_kpi.get("delivery_events") or []
+                    attendees_rows = []
+                    for e in delivery_events:
+                        attendees_rows.append({
+                            "Event": _get_row_value(e, "name", "title", "event_name", "Display Name") or e.get("id"),
+                            "Date": _get_row_value(e, "start_date", "date", "created_at"),
+                            "Attendees": _coerce_int(_get_row_value(e, "number_of_attendees", "Number of attendees", "attendees", "participant_count")),
+                        })
+                    attendees_df = pd.DataFrame(attendees_rows)
+                    if attendees_df.empty:
+                        st.caption("No event rows found for this selection.")
+                    else:
+                        _show_df_limited(attendees_df, key="tbl_del_events")
+                    _render_deep_drilldown(
+                        delivery_events,
+                        lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
+                        key="dd_del_events",
+                        empty_msg="No event source rows found for deeper drill-down.",
+                    )
         with m2:
             with st.popover(
                 f"Total Participants\n{data['delivery']['participants']}",
                 use_container_width=True,
             ):
-                delivery_events = raw_kpi.get("delivery_events") or []
-                delivery_df = pd.DataFrame(delivery_events)
-                if not delivery_df.empty:
-                    st.dataframe(delivery_df, use_container_width=True, hide_index=True)
-                else:
-                    st.caption("No delivery-tagged event rows found for this filtered period.")
-                _render_deep_drilldown(
-                    delivery_events,
-                    lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
-                    key="dd_del_participants",
-                    empty_msg="No event source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_del_participants"):
+                    delivery_events = raw_kpi.get("delivery_events") or []
+                    delivery_df = pd.DataFrame(delivery_events)
+                    if delivery_df.empty:
+                        st.caption("No delivery-tagged event rows found for this filtered period.")
+                    else:
+                        _show_df_limited(delivery_df, key="tbl_del_participants")
+                    _render_deep_drilldown(
+                        delivery_events,
+                        lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
+                        key="dd_del_participants",
+                        empty_msg="No event source rows found for deeper drill-down.",
+                    )
         with m3:
             with st.popover(
                 f"Bursary Participants\n{data['delivery']['bursary_participants']}",
@@ -3075,35 +3099,36 @@ def main_dashboard():
                 f"Total Funds Raised\n£{data['income']['total_funds_raised']:,.2f}",
                 use_container_width=True,
             ):
-                payment_rows = []
-                for p in raw_kpi.get("region_payments") or []:
-                    payment_rows.append({
-                        "Source": "Payments",
-                        "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
-                        "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
-                        "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
-                        "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
-                    })
-                grant_rows = []
-                for g in raw_kpi.get("region_grants") or []:
-                    grant_rows.append({
-                        "Source": "Grants",
-                        "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
-                        "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
-                        "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
-                        "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
-                    })
-                funds_df = pd.DataFrame(payment_rows + grant_rows)
-                if not funds_df.empty:
-                    st.dataframe(funds_df.sort_values("When", ascending=False), use_container_width=True, hide_index=True)
-                else:
-                    st.caption("No payment or grant rows found for this filtered period.")
-                _render_deep_drilldown(
-                    payment_rows + grant_rows,
-                    lambda r: f"{r.get('Source', '')} - {r.get('From', '')}",
-                    key="dd_inc_total_funds",
-                    empty_msg="No payment or grant source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_inc_total_funds"):
+                    payment_rows = []
+                    for p in raw_kpi.get("region_payments") or []:
+                        payment_rows.append({
+                            "Source": "Payments",
+                            "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
+                            "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
+                            "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
+                            "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
+                        })
+                    grant_rows = []
+                    for g in raw_kpi.get("region_grants") or []:
+                        grant_rows.append({
+                            "Source": "Grants",
+                            "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                            "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                            "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                            "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                        })
+                    funds_df = pd.DataFrame(payment_rows + grant_rows)
+                    if funds_df.empty:
+                        st.caption("No payment or grant rows found for this filtered period.")
+                    else:
+                        _show_df_limited(funds_df.sort_values("When", ascending=False), key="tbl_inc_total_funds")
+                    _render_deep_drilldown(
+                        payment_rows + grant_rows,
+                        lambda r: f"{r.get('Source', '')} - {r.get('From', '')}",
+                        key="dd_inc_total_funds",
+                        empty_msg="No payment or grant source rows found for deeper drill-down.",
+                    )
             with st.popover(
                 f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
                 use_container_width=True,
@@ -3115,53 +3140,53 @@ def main_dashboard():
                 f"Bids Submitted\n{data['income']['bids_submitted']}",
                 use_container_width=True,
             ):
-                grant_rows = []
-                for g in raw_kpi.get("region_grants") or []:
-                    grant_rows.append({
-                        "Source": "Grants",
-                        "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
-                        "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
-                        "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
-                        "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
-                    })
-                bids_df = pd.DataFrame([r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])])
-                st.dataframe(
-                    bids_df if not bids_df.empty else pd.DataFrame(columns=["Source", "When", "From", "Amount", "Status"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                bids_rows = [r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])]
-                _render_deep_drilldown(
-                    bids_rows,
-                    lambda r: f"{r.get('From', '')} ({r.get('Status', '')})",
-                    key="dd_inc_bids",
-                    empty_msg="No bid source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_inc_bids"):
+                    grant_rows = []
+                    for g in raw_kpi.get("region_grants") or []:
+                        grant_rows.append({
+                            "Source": "Grants",
+                            "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                            "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                            "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                            "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                        })
+                    bids_rows = [r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])]
+                    bids_df = pd.DataFrame(bids_rows)
+                    if bids_df.empty:
+                        st.caption("No bid rows found for this filtered period.")
+                    else:
+                        _show_df_limited(bids_df, key="tbl_inc_bids")
+                    _render_deep_drilldown(
+                        bids_rows,
+                        lambda r: f"{r.get('From', '')} ({r.get('Status', '')})",
+                        key="dd_inc_bids",
+                        empty_msg="No bid source rows found for deeper drill-down.",
+                    )
             with st.popover(
                 f"Corporate Partners\n{data['income']['corporate_partners']}",
                 use_container_width=True,
             ):
-                corp_rows = raw_kpi.get("corporate_orgs") or []
-                corp_df = _rows_to_df(
-                    corp_rows,
-                    {
-                        "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                        "Type": lambda r: str(r.get("type") or ""),
-                        "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                        "Created": lambda r: r.get("created_at"),
-                    },
-                )
-                st.dataframe(
-                    corp_df if not corp_df.empty else pd.DataFrame(columns=["Organisation", "Type", "Region", "Created"]),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                _render_deep_drilldown(
-                    corp_rows,
-                    lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                    key="dd_inc_corp",
-                    empty_msg="No corporate partner source rows found for deeper drill-down.",
-                )
+                if _details_enabled("lazy_inc_corp"):
+                    corp_rows = raw_kpi.get("corporate_orgs") or []
+                    corp_df = _rows_to_df(
+                        corp_rows,
+                        {
+                            "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                            "Type": lambda r: str(r.get("type") or ""),
+                            "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                            "Created": lambda r: r.get("created_at"),
+                        },
+                    )
+                    if corp_df.empty:
+                        st.caption("No corporate partner rows found for this filtered period.")
+                    else:
+                        _show_df_limited(corp_df, key="tbl_inc_corp")
+                    _render_deep_drilldown(
+                        corp_rows,
+                        lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                        key="dd_inc_corp",
+                        empty_msg="No corporate partner source rows found for deeper drill-down.",
+                    )
         st.caption("Click a metric above to open its drill-down popup.")
 
         st.subheader("Income Over Time")
