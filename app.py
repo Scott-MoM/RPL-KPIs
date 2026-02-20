@@ -3444,10 +3444,7 @@ def main_dashboard():
         if not data_lsp and not data_ldp:
             st.info("No Organisation data found for this region.")
         else:
-            df_partners = pd.DataFrame(data_lsp + data_ldp)
-            fig = px.bar(df_partners, x="Sector", y="Count", color="Type", barmode="group",
-                         title="Partner Breakdown: Strategic vs Delivery")
-            st.plotly_chart(fig, use_container_width=True)
+            st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
         
         c1, c2 = st.columns(2)
         with c1:
@@ -3577,14 +3574,8 @@ def main_dashboard():
         st.subheader("Demographics")
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
-        if demo_source == "people_type_tags":
-            demo_title = "Participant Cohorts (from people type tags)"
-        elif demo_source == "event_type_split":
-            demo_title = "Delivery Split (by event type)"
-        else:
-            demo_title = "Representation from Available Data"
-        fig_pie = px.pie(df_demo, values='Count', names='Group', title=demo_title)
-        st.plotly_chart(fig_pie)
+        st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
+        st.dataframe(df_demo, use_container_width=True, hide_index=True)
         if demo_source == "people_type_tags":
             st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
         elif demo_source == "event_type_split":
@@ -3746,15 +3737,8 @@ def main_dashboard():
                     title = "Monthly Income (All Time)"
 
                 df_income = df_income.groupby([pd.Grouper(key="date", freq=freq), "source"], as_index=False)["amount"].sum()
-                fig_income = px.line(
-                    df_income,
-                    x="date",
-                    y="amount",
-                    color="source",
-                    markers=True,
-                    title=title
-                )
-                st.plotly_chart(fig_income, use_container_width=True)
+                st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
+                st.dataframe(df_income.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
             else:
                 st.info("No dated income records found for this period.")
         else:
