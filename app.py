@@ -431,6 +431,9 @@ SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 SYNC_JOBS = {}
 SYNC_JOBS_LOCK = threading.Lock()
 
+class SyncCancelledError(Exception):
+    pass
+
 def get_admin_client():
     if "supabase" not in st.secrets:
         return None
@@ -613,14 +616,19 @@ def _upsert_in_batches(
     default_chunk_size=200,
     min_chunk_size=25,
     batch_progress_callback=None,
+    should_cancel=None,
 ):
     if not rows:
         return 0
     total = len(rows)
     index = 0
     while index < total:
+        if should_cancel and should_cancel():
+            raise SyncCancelledError("Manual sync cancelled by user.")
         chunk_size = min(default_chunk_size, total - index)
         while True:
+            if should_cancel and should_cancel():
+                raise SyncCancelledError("Manual sync cancelled by user.")
             chunk = rows[index:index + chunk_size]
             try:
                 admin_client.table(table).upsert(chunk, on_conflict=on_conflict).execute()
@@ -972,7 +980,7 @@ def _extract_region_tags(record):
             out.append(s)
     return out
 
-def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50, max_pages=200):
+def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50, max_pages=200, should_cancel=None):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -981,6 +989,8 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50,
     all_rows = []
     page = 1
     while page <= max_pages:
+        if should_cancel and should_cancel():
+            raise SyncCancelledError("Manual sync cancelled by user.")
         url = _build_beacon_url(base_url, account_id, endpoint)
         params = {
             "page": page,
@@ -990,6 +1000,8 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50,
         }
         resp = None
         for attempt in range(4):
+            if should_cancel and should_cancel():
+                raise SyncCancelledError("Manual sync cancelled by user.")
             resp = requests.get(url, headers=headers, params=params, timeout=45)
             if resp.status_code not in (429, 500, 502, 503, 504):
                 break
@@ -1103,13 +1115,19 @@ def run_beacon_api_smoke_test():
         },
     }
 
-def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
+def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_cancel=None):
     def _status_text(progress, message):
         return f"{int(progress)}% | {message}"
 
     def _report(progress, message):
+        if should_cancel and should_cancel():
+            raise SyncCancelledError("Manual sync cancelled by user.")
         if progress_callback:
             progress_callback(progress, _status_text(progress, message))
+
+    def _check_cancel():
+        if should_cancel and should_cancel():
+            raise SyncCancelledError("Manual sync cancelled by user.")
 
     total_started = time.time()
     now_iso = datetime.utcnow().isoformat() + "Z"
@@ -1132,12 +1150,13 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     fetch_started = time.time()
     _report(5, "Starting Beacon API sync...")
     for idx, (dataset_key, endpoint, label) in enumerate(fetch_plan):
+        _check_cancel()
         fetch_start = 5 + int((idx / len(fetch_plan)) * 45)
         fetch_end = 5 + int(((idx + 1) / len(fetch_plan)) * 45)
         _report(fetch_start, f"Fetching Beacon {label} ({idx + 1} of {len(fetch_plan)} datasets)...")
         endpoint_started = time.time()
         datasets[dataset_key] = _fetch_beacon_entities(
-            beacon_base_url, beacon_key, beacon_account_id, endpoint
+            beacon_base_url, beacon_key, beacon_account_id, endpoint, should_cancel=should_cancel
         )
         fetch_breakdown_ms[dataset_key] = int((time.time() - endpoint_started) * 1000)
         _report(fetch_end, f"Fetched Beacon {label}: {len(datasets[dataset_key])} records.")
@@ -1158,10 +1177,13 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     datasets["event_attendees"] = []
     attendee_fetch_started = time.time()
     for endpoint, label in attendee_endpoint_candidates:
+        _check_cancel()
         if not endpoint:
             continue
         try:
-            rows = _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, endpoint)
+            rows = _fetch_beacon_entities(
+                beacon_base_url, beacon_key, beacon_account_id, endpoint, should_cancel=should_cancel
+            )
             datasets["event_attendees"] = rows
             _report(50, f"Fetched Beacon {label}: {len(rows)} records from endpoint '{endpoint}'.")
             break
@@ -1171,6 +1193,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
     fetch_duration_ms = int((time.time() - fetch_started) * 1000)
 
     _report(55, "Transforming Beacon records...")
+    _check_cancel()
     transform_started = time.time()
 
     people_seen = {}
@@ -1358,12 +1381,14 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
             overall_synced = synced_records + done
             _report(pct, f"Upserting {label}... {overall_synced} out of {total_records} records synced.")
 
+        _check_cancel()
         _upsert_in_batches(
             admin_client,
             table_name,
             rows,
             on_conflict="id",
             batch_progress_callback=_on_batch,
+            should_cancel=should_cancel,
         )
         return len(rows)
 
@@ -2411,7 +2436,7 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
         resp = (
             DB_CLIENT.table("audit_logs")
             .select("created_at, user_email, action, details, region")
-            .in_("action", ["Data Sync Started", "Data Sync Progress", "Data Sync Completed", "Data Sync Failed"])
+            .in_("action", ["Data Sync Started", "Data Sync Progress", "Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled"])
             .order("created_at", desc=True)
             .limit(lookback_rows)
             .execute()
@@ -2441,14 +2466,19 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
         return None
 
     start_row = next((r for r in reversed(job_rows) if r.get("action") == "Data Sync Started"), None)
-    end_row = next((r for r in job_rows if r.get("action") in ("Data Sync Completed", "Data Sync Failed")), None)
+    end_row = next((r for r in job_rows if r.get("action") in ("Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled")), None)
     progress_row = next((r for r in job_rows if r.get("action") == "Data Sync Progress"), None)
 
     status = "running"
     if end_row:
-        status = "completed" if end_row.get("action") == "Data Sync Completed" else "failed"
+        if end_row.get("action") == "Data Sync Completed":
+            status = "completed"
+        elif end_row.get("action") == "Data Sync Cancelled":
+            status = "cancelled"
+        else:
+            status = "failed"
 
-    if status in ("completed", "failed"):
+    if status in ("completed", "failed", "cancelled"):
         progress = 100
     elif progress_row:
         progress = int((progress_row.get("details") or {}).get("progress") or 0)
@@ -2462,6 +2492,8 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
         message = "Beacon API sync complete."
     if status == "failed":
         message = "Beacon API sync failed."
+    if status == "cancelled":
+        message = "Beacon API sync cancelled."
 
     state = {
         "job_id": job_id,
@@ -2493,6 +2525,15 @@ def _run_manual_sync_job(job_id):
     state = _get_sync_job_state(job_id) or {}
     user_email = state.get("user_email", "System")
     region = state.get("region", "Global")
+    if state.get("status") == "cancelled" or state.get("cancel_requested"):
+        _set_sync_job_state(
+            job_id,
+            status="cancelled",
+            progress=100,
+            message="Manual sync cancelled before start.",
+            ended_at=time.time(),
+        )
+        return
     started_at = time.time()
     _set_sync_job_state(
         job_id,
@@ -2522,16 +2563,27 @@ def _run_manual_sync_job(job_id):
         region=region,
     )
 
+    def _is_cancel_requested():
+        current_state = _get_sync_job_state(job_id) or {}
+        return bool(current_state.get("cancel_requested"))
+
     last_logged_progress = {"value": -1}
     def _sync_job_progress(progress, message):
         pct = int(max(0, min(100, progress)))
+        if _is_cancel_requested():
+            _set_sync_job_state(job_id, message="Cancellation requested...")
+            raise SyncCancelledError("Manual sync cancelled by user.")
         _set_sync_job_state(job_id, progress=pct, message=message)
         if pct >= last_logged_progress["value"] + 5 or pct in (0, 100):
             _log_manual_sync_progress(admin_client, user_email, region, job_id, pct, message)
             last_logged_progress["value"] = pct
 
     try:
-        result = sync_beacon_api_to_supabase(admin_client, progress_callback=_sync_job_progress)
+        result = sync_beacon_api_to_supabase(
+            admin_client,
+            progress_callback=_sync_job_progress,
+            should_cancel=_is_cancel_requested,
+        )
         result["source"] = "beacon_api"
         result["trigger"] = "manual_ui"
         result["job_id"] = job_id
@@ -2543,6 +2595,21 @@ def _run_manual_sync_job(job_id):
             message="Beacon API sync complete.",
             ended_at=time.time(),
             result=result,
+        )
+    except SyncCancelledError:
+        _insert_system_audit(
+            admin_client,
+            "Data Sync Cancelled",
+            {"source": "beacon_api", "trigger": "manual_ui", "job_id": job_id},
+            user_email=user_email,
+            region=region,
+        )
+        _set_sync_job_state(
+            job_id,
+            status="cancelled",
+            progress=100,
+            message="Manual sync cancelled.",
+            ended_at=time.time(),
         )
     except Exception as e:
         _insert_system_audit(
@@ -2583,6 +2650,37 @@ def start_manual_sync_job(user_email, region):
     SYNC_EXECUTOR.submit(_run_manual_sync_job, job_id)
     return job_id, None
 
+def stop_manual_sync_job(job_id, user_email=None, region=None):
+    if not job_id:
+        return False, "No active manual sync job found."
+    with SYNC_JOBS_LOCK:
+        state = SYNC_JOBS.get(job_id)
+        if not state:
+            return False, "Manual sync job not found."
+        status = state.get("status")
+        if status in ("completed", "failed", "cancelled"):
+            return False, f"Manual sync is already {status}."
+        if status == "queued":
+            state["status"] = "cancelled"
+            state["progress"] = 100
+            state["message"] = "Manual sync cancelled before start."
+            state["ended_at"] = time.time()
+            SYNC_JOBS[job_id] = state
+        else:
+            state["cancel_requested"] = True
+            state["message"] = "Cancellation requested..."
+            SYNC_JOBS[job_id] = state
+    admin_client = get_admin_client()
+    if admin_client:
+        _insert_system_audit(
+            admin_client,
+            "Data Sync Cancellation Requested",
+            {"source": "beacon_api", "trigger": "manual_ui", "job_id": job_id},
+            user_email=user_email or st.session_state.get("email", "System"),
+            region=region or st.session_state.get("region", "Global"),
+        )
+    return True, "Stop request sent. The sync will stop shortly."
+
 def render_manual_sync_status():
     job_id = st.session_state.get("manual_sync_job_id")
     if not job_id:
@@ -2613,8 +2711,8 @@ def render_manual_sync_status():
         if not state:
             return None, False
 
-    # Auto-hide completed/failed sync from sidebar once handled.
-    if state.get("status") in ("completed", "failed"):
+    # Auto-hide finished sync states from sidebar once handled.
+    if state.get("status") in ("completed", "failed", "cancelled"):
         st.session_state.pop("manual_sync_job_id", None)
         return state, False
 
@@ -2634,6 +2732,8 @@ def render_manual_sync_status():
         toast_class = "sync-toast-complete"
     elif status == "failed":
         toast_class = "sync-toast-failed"
+    elif status == "cancelled":
+        toast_class = "sync-toast-failed"
     st.sidebar.markdown(
         f"<div class='sync-toast {toast_class}'>Sync {status.title()} | {progress}%<br>{message}</div>",
         unsafe_allow_html=True,
@@ -2646,6 +2746,8 @@ def render_manual_sync_status():
         st.sidebar.success("Status: Completed")
     elif status == "failed":
         st.sidebar.error("Status: Failed")
+    elif status == "cancelled":
+        st.sidebar.warning("Status: Cancelled")
     else:
         st.sidebar.warning(f"Status: {status}")
 
@@ -2694,6 +2796,8 @@ def render_manual_sync_main_panel(sync_state):
         st.success("Sync completed.")
     elif status == "failed":
         st.error("Sync failed.")
+    elif status == "cancelled":
+        st.warning("Sync cancelled.")
     else:
         st.warning(f"Sync status: {status}")
 
@@ -3091,6 +3195,19 @@ def admin_dashboard():
                 active_state = get_latest_manual_sync_state(st.session_state.get("email"))
                 if active_state and active_state.get("job_id"):
                     st.session_state["manual_sync_job_id"] = active_state.get("job_id")
+                    active_job_id = active_state.get("job_id")
+            if active_state and active_state.get("status") in ("queued", "running"):
+                if st.button("Stop Manual API Sync", key="stop_manual_sync_btn"):
+                    ok, msg = stop_manual_sync_job(
+                        active_job_id,
+                        user_email=st.session_state.get("email", "System"),
+                        region=st.session_state.get("region", "Global"),
+                    )
+                    if ok:
+                        st.warning(msg)
+                    else:
+                        st.info(msg)
+                    st.rerun()
             if active_state:
                 with st.expander("Active Sync Progress", expanded=True):
                     render_manual_sync_main_panel(active_state)
