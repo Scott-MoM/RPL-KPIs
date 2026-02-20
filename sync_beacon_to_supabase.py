@@ -267,9 +267,22 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
 
     # Optional direct attendee source (preferred for participant drill-down).
     datasets["event_attendees"] = []
-    attendee_endpoint_candidates = ["event_attendee", "event_attendees", "attendance", "event_attendance"]
+    configured_attendee_endpoint = os.getenv("BEACON_EVENT_ATTENDEES_ENDPOINT", "").strip()
+    attendee_endpoint_candidates = [
+        configured_attendee_endpoint,
+        "event_attendee",
+        "event_attendees",
+        "event_attendance",
+        "event_attendances",
+        "attendance",
+        "attendees",
+        "event_registration",
+        "event_registrations",
+    ]
     attendee_fetch_started = time.time()
     for endpoint in attendee_endpoint_candidates:
+        if not endpoint:
+            continue
         try:
             datasets["event_attendees"] = fetch_all(endpoint, beacon_key, account_id, base_url=beacon_base_url)
             break
@@ -305,10 +318,21 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
     ]
     attendee_map = {}
 
+    def _norm_key(value):
+        if value is None:
+            return ""
+        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
     def _row_value(row, *keys):
+        if not isinstance(row, dict):
+            return None
         for k in keys:
-            if isinstance(row, dict) and row.get(k) not in [None, ""]:
+            if row.get(k) not in [None, ""]:
                 return row.get(k)
+        wanted = {_norm_key(k) for k in keys}
+        for rk, rv in row.items():
+            if _norm_key(rk) in wanted and rv not in [None, ""]:
+                return rv
         return None
 
     def _att_event_id(att):
@@ -347,12 +371,37 @@ def run_sync_once(client, beacon_key, account_id, beacon_base_url):
                         return str(ref.get("id"))
         return None
 
+    def _walk_find_ids(value, context_tokens, id_tokens, out, path=""):
+        path_l = str(path).lower()
+        in_context = any(t in path_l for t in context_tokens) if path_l else False
+        if isinstance(value, dict):
+            for k, v in value.items():
+                next_path = f"{path}.{k}" if path else str(k)
+                key_l = str(k).lower()
+                if any(tok in key_l for tok in id_tokens) and (in_context or any(t in key_l for t in context_tokens)):
+                    if v not in [None, ""]:
+                        out.add(str(v))
+                _walk_find_ids(v, context_tokens, id_tokens, out, next_path)
+        elif isinstance(value, list):
+            for idx, item in enumerate(value):
+                _walk_find_ids(item, context_tokens, id_tokens, out, f"{path}[{idx}]")
+
     for row in datasets.get("event_attendees") or []:
         att = extract_entity(row)
         eid = _att_event_id(att)
         if not eid:
+            event_ids = set()
+            _walk_find_ids(att, context_tokens=("event", "activity", "session"), id_tokens=("id", "event"), out=event_ids)
+            if event_ids:
+                eid = sorted(event_ids, key=lambda x: len(str(x)))[0]
+        if not eid:
             continue
         pid = _att_person_id(att)
+        if not pid:
+            person_ids = set()
+            _walk_find_ids(att, context_tokens=("person", "contact", "participant", "attendee", "people"), id_tokens=("id", "person", "contact", "participant"), out=person_ids)
+            if person_ids:
+                pid = sorted(person_ids, key=lambda x: len(str(x)))[0]
         name = _row_value(att, "name", "full_name", "display_name", "participant_name", "attendee_name", "person_name", "email")
         if (not name) and pid:
             name = people_name_by_id.get(str(pid))

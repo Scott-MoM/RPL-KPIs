@@ -1009,15 +1009,23 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None):
         _report(fetch_end, f"Fetched Beacon {label}: {len(datasets[dataset_key])} records.")
 
     # Optional direct attendee source (preferred for participant drill-down).
+    configured_attendee_endpoint = _get_secret_or_env("BEACON_EVENT_ATTENDEES_ENDPOINT")
     attendee_endpoint_candidates = [
+        (configured_attendee_endpoint, "event attendees"),
         ("event_attendee", "event attendees"),
         ("event_attendees", "event attendees"),
-        ("attendance", "attendance"),
         ("event_attendance", "event attendance"),
+        ("event_attendances", "event attendance"),
+        ("attendance", "attendance"),
+        ("attendees", "attendees"),
+        ("event_registration", "event registrations"),
+        ("event_registrations", "event registrations"),
     ]
     datasets["event_attendees"] = []
     attendee_fetch_started = time.time()
     for endpoint, label in attendee_endpoint_candidates:
+        if not endpoint:
+            continue
         try:
             rows = _fetch_beacon_entities(beacon_base_url, beacon_key, beacon_account_id, endpoint)
             datasets["event_attendees"] = rows
