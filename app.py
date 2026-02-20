@@ -1741,7 +1741,17 @@ def compute_kpis(region, people, organisations, events, payments, grants):
     def _id_key(value):
         if value is None:
             return ""
-        return "".join(ch for ch in str(value).lower() if ch.isalnum())
+        s = str(value).strip().lower()
+        if not s:
+            return ""
+        if "/" in s:
+            s = s.rstrip("/").split("/")[-1]
+        if ":" in s:
+            s = s.split(":")[-1]
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if len(digits) >= 4:
+            return digits
+        return "".join(ch for ch in s if ch.isalnum())
 
     people_name_by_id = {}
     for person_row in people:
