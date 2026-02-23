@@ -610,7 +610,27 @@ def _decode_funder_scope(scope_value):
         return raw[len(FUNDER_SCOPE_PREFIX):].strip()
     return ""
 
-def _extract_funder_name(row):
+@st.cache_data(show_spinner=False, ttl=300)
+def get_organisation_name_lookup(max_rows=3000):
+    lookup = {}
+    if DB_TYPE != "supabase":
+        return lookup
+    try:
+        rows = DB_CLIENT.table("beacon_organisations").select("payload").limit(max_rows).execute().data or []
+        for r in rows:
+            payload = r.get("payload") or {}
+            org_id = payload.get("id")
+            org_name = _get_row_value(payload, "name", "Organisation", "Organization", "Display Name")
+            if org_id is None or not org_name:
+                continue
+            key = _norm_key(org_id)
+            if key:
+                lookup[key] = str(org_name).strip()
+    except Exception:
+        return {}
+    return lookup
+
+def _extract_funder_name(row, org_name_lookup=None):
     name = _get_row_value(
         row,
         "funder",
@@ -629,22 +649,46 @@ def _extract_funder_name(row):
         "grantor_name",
     )
     if isinstance(name, dict):
-        name = _get_row_value(name, "name", "title", "display_name") or name.get("id")
+        display = _get_row_value(name, "name", "title", "display_name")
+        if display:
+            name = display
+        else:
+            ref_id = name.get("id")
+            resolved = None
+            if org_name_lookup and ref_id is not None:
+                resolved = org_name_lookup.get(_norm_key(ref_id))
+            name = resolved or ""
     if isinstance(name, list):
         name = ", ".join(str(x) for x in name if str(x).strip())
     value = str(name or "").strip()
-    return value if value else "Unknown / Not tagged"
+    if not value:
+        # Common fallback: organization field carries only an id reference.
+        ref = _get_row_value(row, "organization", "organisation", "organisation_id", "organization_id")
+        if isinstance(ref, dict):
+            ref = ref.get("id")
+        if org_name_lookup and ref is not None:
+            mapped = org_name_lookup.get(_norm_key(ref))
+            if mapped:
+                return mapped
+        return "Unknown / Not tagged"
+    # If value itself looks like an ID and can be resolved, prefer the readable name.
+    if org_name_lookup:
+        mapped = org_name_lookup.get(_norm_key(value))
+        if mapped:
+            return mapped
+    return value
 
 @st.cache_data(show_spinner=False, ttl=300)
 def get_available_funders(max_rows=2000):
     funders = set()
+    org_name_lookup = get_organisation_name_lookup()
     if DB_TYPE == "supabase":
         try:
             pay_rows = DB_CLIENT.table("beacon_payments").select("payload").limit(max_rows).execute().data or []
             grant_rows = DB_CLIENT.table("beacon_grants").select("payload").limit(max_rows).execute().data or []
             for r in pay_rows + grant_rows:
                 payload = r.get("payload") or {}
-                name = _extract_funder_name(payload)
+                name = _extract_funder_name(payload, org_name_lookup=org_name_lookup)
                 if name:
                     funders.add(name)
         except Exception:
@@ -3055,9 +3099,10 @@ def funder_dashboard():
     raw_income = data.get("_raw_income", {}) or {}
     payments_all = raw_income.get("payments") or []
     grants_all = raw_income.get("grants") or []
+    org_name_lookup = get_organisation_name_lookup()
     funder_map = {}
     for row in payments_all + grants_all:
-        fname = _extract_funder_name(row)
+        fname = _extract_funder_name(row, org_name_lookup=org_name_lookup)
         fk = _funder_key(fname)
         if fk and fk not in funder_map:
             funder_map[fk] = fname
@@ -3074,7 +3119,7 @@ def funder_dashboard():
     def _row_matches_funder(row):
         if selected_funder == "All Funders":
             return True
-        return _funder_key(_extract_funder_name(row)) == selected_funder_key
+        return _funder_key(_extract_funder_name(row, org_name_lookup=org_name_lookup)) == selected_funder_key
 
     filtered_payments = [r for r in payments_all if _row_matches_funder(r)]
     filtered_grants = [r for r in grants_all if _row_matches_funder(r)]
