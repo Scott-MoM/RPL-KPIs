@@ -2901,12 +2901,160 @@ def clear_dashboard_data_except_users(admin_client, progress_callback=None):
 
 # --- UI COMPONENTS ---
 
+def _query_param_first(params, key):
+    value = params.get(key)
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value
+
+def _get_query_params():
+    try:
+        params = dict(st.query_params)
+        return params
+    except Exception:
+        pass
+    try:
+        return st.experimental_get_query_params()
+    except Exception:
+        return {}
+
+def _is_public_funder_request():
+    params = _get_query_params()
+    public_flag = str(_query_param_first(params, "public") or "").strip().lower()
+    view_flag = str(_query_param_first(params, "view") or "").strip().lower()
+    return public_flag in ("funder", "funders") or view_flag in ("funder", "funders")
+
+def _gdpr_safe_count(value, threshold=5):
+    try:
+        n = int(value or 0)
+    except Exception:
+        n = 0
+    if 0 < n < threshold:
+        return f"<{threshold}"
+    return f"{max(0, n):,}"
+
+def funder_dashboard_public():
+    st.title("Funder Dashboard")
+    st.caption("Public view with GDPR-safe, aggregated metrics only. No personal data is shown.")
+
+    st.sidebar.markdown("### Public Access")
+    st.sidebar.caption("Viewing public funder dashboard (no login required).")
+    st.sidebar.markdown("[Staff Login](./)")
+
+    region_options = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
+    c_region, c_tf = st.columns([1, 1])
+    with c_region:
+        region_val = st.selectbox("Region", region_options, index=0, key="funder_region")
+    with c_tf:
+        timeframe = st.selectbox("Timeframe", ["All Time", "Year", "Quarter", "Month", "Custom Range"], index=0, key="funder_timeframe")
+
+    today = pd.Timestamp.now().normalize()
+    start_date = None
+    end_date = None
+    if timeframe == "Year":
+        start_date = today - pd.DateOffset(years=1)
+        end_date = today
+    elif timeframe == "Quarter":
+        start_date = today - pd.DateOffset(months=3)
+        end_date = today
+    elif timeframe == "Month":
+        start_date = today - pd.DateOffset(months=1)
+        end_date = today
+    elif timeframe == "Custom Range":
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            custom_start = st.date_input("Start date", value=(today - pd.Timedelta(days=30)).date(), key="funder_start")
+        with cc2:
+            custom_end = st.date_input("End date", value=today.date(), key="funder_end")
+        if custom_end < custom_start:
+            st.error("End date must be on or after start date.")
+            return
+        start_date = pd.Timestamp(custom_start)
+        end_date = pd.Timestamp(custom_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+    data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+    if not data:
+        st.error("No dashboard data is available for this public view.")
+        return
+
+    last_refresh = get_last_refresh_timestamp()
+    if last_refresh:
+        st.caption(f"Last Data Refresh (UTC): {last_refresh.strftime('%d/%m/%Y %H:%M')}")
+    else:
+        st.caption("Last Data Refresh (UTC): Unknown")
+
+    g = data.get("governance", {})
+    p = data.get("partnerships", {})
+    d = data.get("delivery", {})
+    i = data.get("income", {})
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Active Volunteers", _gdpr_safe_count(g.get("volunteers_new", 0)))
+    m2.metric("Active Organisations", _gdpr_safe_count(p.get("active_referrals", 0)))
+    m3.metric("Delivery Events", _gdpr_safe_count(d.get("walks_delivered", 0)))
+    m4, m5, m6 = st.columns(3)
+    m4.metric("Participants Reached", _gdpr_safe_count(d.get("participants", 0)))
+    m5.metric("Bids Submitted", _gdpr_safe_count(i.get("bids_submitted", 0)))
+    m6.metric("Total Funds Raised", f"£{float(i.get('total_funds_raised') or 0):,.2f}")
+
+    st.markdown("### Partnership Mix")
+    mix_rows = []
+    for sector, count in (p.get("LSP") or {}).items():
+        mix_rows.append({"Type": "Strategic", "Sector": str(sector), "Count": int(count or 0)})
+    for sector, count in (p.get("LDP") or {}).items():
+        mix_rows.append({"Type": "Delivery", "Sector": str(sector), "Count": int(count or 0)})
+    mix_df = pd.DataFrame(mix_rows)
+    if not mix_df.empty:
+        fig_mix = px.bar(mix_df, x="Sector", y="Count", color="Type", barmode="group")
+        render_plot_with_export(fig_mix, "funder-partnership-mix", "funder_partnership_mix")
+    else:
+        st.info("No partnership data available for this selection.")
+
+    st.markdown("### Delivery Demographics (Aggregated)")
+    demo_df = pd.DataFrame(
+        [{"Group": str(k), "Count": int(v or 0)} for k, v in (d.get("demographics") or {}).items()]
+    )
+    if not demo_df.empty:
+        demo_df = demo_df.sort_values("Count", ascending=False)
+        fig_demo = px.bar(demo_df, x="Group", y="Count")
+        render_plot_with_export(fig_demo, "funder-demographics", "funder_demographics")
+    else:
+        st.info("No demographic summary available for this selection.")
+
+    st.markdown("### Income Trend (Aggregated)")
+    income_rows = []
+    for row in (data.get("_raw_income", {}).get("payments") or []):
+        income_rows.append({
+            "date": row.get("payment_date"),
+            "source": "Payments",
+            "amount": _coerce_money(row.get("amount")),
+        })
+    for row in (data.get("_raw_income", {}).get("grants") or []):
+        income_rows.append({
+            "date": row.get("close_date"),
+            "source": "Grants",
+            "amount": _coerce_money(row.get("amount")),
+        })
+    if income_rows:
+        income_df = pd.DataFrame(income_rows)
+        income_df["date"] = pd.to_datetime(income_df["date"], errors="coerce")
+        income_df = income_df.dropna(subset=["date"])
+        if not income_df.empty:
+            monthly = income_df.groupby([pd.Grouper(key="date", freq="M"), "source"], as_index=False)["amount"].sum()
+            fig_income = px.line(monthly, x="date", y="amount", color="source", markers=True)
+            render_plot_with_export(fig_income, "funder-income-trend", "funder_income_trend")
+        else:
+            st.info("No dated income rows available for trend chart.")
+    else:
+        st.info("No income rows available for trend chart.")
+
 def login_page():
     st.markdown("## Login")
     st.markdown(
         "<div class='neon-callout'>Please sign in with your email address.</div>",
         unsafe_allow_html=True
     )
+    st.markdown("[Open Public Funder Dashboard](?public=funder)")
     
     if DB_TYPE == 'local':
         st.warning("Running in Local Mode. Add Supabase secrets to enable Cloud Database.")
@@ -4660,6 +4808,10 @@ def main():
     
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
+
+    if _is_public_funder_request():
+        funder_dashboard_public()
+        return
 
     if not st.session_state['logged_in']:
         login_page()
