@@ -575,6 +575,21 @@ def _norm_key(value):
         return ""
     return "".join(ch for ch in str(value).lower() if ch.isalnum())
 
+def _entity_ref_key(value):
+    if value is None:
+        return ""
+    s = str(value).strip().lower()
+    if not s:
+        return ""
+    if "/" in s:
+        s = s.rstrip("/").split("/")[-1]
+    if ":" in s:
+        s = s.split(":")[-1]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 4:
+        return digits
+    return "".join(ch for ch in s if ch.isalnum())
+
 def _get_row_value(row, *keys):
     if not row or not keys:
         return None
@@ -616,16 +631,34 @@ def get_organisation_name_lookup(max_rows=3000):
     if DB_TYPE != "supabase":
         return lookup
     try:
-        rows = DB_CLIENT.table("beacon_organisations").select("payload").limit(max_rows).execute().data or []
-        for r in rows:
-            payload = r.get("payload") or {}
-            org_id = payload.get("id")
-            org_name = _get_row_value(payload, "name", "Organisation", "Organization", "Display Name")
-            if org_id is None or not org_name:
-                continue
-            key = _norm_key(org_id)
-            if key:
-                lookup[key] = str(org_name).strip()
+        batch_size = 1000
+        fetched = 0
+        offset = 0
+        while fetched < max_rows:
+            end_idx = min(offset + batch_size - 1, max_rows - 1)
+            rows = (
+                DB_CLIENT.table("beacon_organisations")
+                .select("payload")
+                .range(offset, end_idx)
+                .execute()
+                .data
+                or []
+            )
+            if not rows:
+                break
+            for r in rows:
+                payload = r.get("payload") or {}
+                org_id = payload.get("id")
+                org_name = _get_row_value(payload, "name", "Organisation", "Organization", "Display Name")
+                if org_id is None or not org_name:
+                    continue
+                key = _entity_ref_key(org_id)
+                if key:
+                    lookup[key] = str(org_name).strip()
+            fetched += len(rows)
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
     except Exception:
         return {}
     return lookup
@@ -656,7 +689,7 @@ def _extract_funder_name(row, org_name_lookup=None):
             ref_id = name.get("id")
             resolved = None
             if org_name_lookup and ref_id is not None:
-                resolved = org_name_lookup.get(_norm_key(ref_id))
+                resolved = org_name_lookup.get(_entity_ref_key(ref_id))
             name = resolved or ""
     if isinstance(name, list):
         name = ", ".join(str(x) for x in name if str(x).strip())
@@ -667,15 +700,19 @@ def _extract_funder_name(row, org_name_lookup=None):
         if isinstance(ref, dict):
             ref = ref.get("id")
         if org_name_lookup and ref is not None:
-            mapped = org_name_lookup.get(_norm_key(ref))
+            mapped = org_name_lookup.get(_entity_ref_key(ref))
             if mapped:
                 return mapped
         return "Unknown / Not tagged"
     # If value itself looks like an ID and can be resolved, prefer the readable name.
     if org_name_lookup:
-        mapped = org_name_lookup.get(_norm_key(value))
+        mapped = org_name_lookup.get(_entity_ref_key(value))
         if mapped:
             return mapped
+    # Do not expose unresolved ID-like tokens in the dashboard.
+    key_like = _entity_ref_key(value)
+    if key_like and (value.isdigit() or len(value) <= 16):
+        return "Unknown / Not tagged"
     return value
 
 @st.cache_data(show_spinner=False, ttl=300)
