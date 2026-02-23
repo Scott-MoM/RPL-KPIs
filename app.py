@@ -2436,7 +2436,7 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
         resp = (
             DB_CLIENT.table("audit_logs")
             .select("created_at, user_email, action, details, region")
-            .in_("action", ["Data Sync Started", "Data Sync Progress", "Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled"])
+            .in_("action", ["Data Sync Started", "Data Sync Progress", "Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled", "Data Sync Cleared"])
             .order("created_at", desc=True)
             .limit(lookback_rows)
             .execute()
@@ -2466,14 +2466,14 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
         return None
 
     start_row = next((r for r in reversed(job_rows) if r.get("action") == "Data Sync Started"), None)
-    end_row = next((r for r in job_rows if r.get("action") in ("Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled")), None)
+    end_row = next((r for r in job_rows if r.get("action") in ("Data Sync Completed", "Data Sync Failed", "Data Sync Cancelled", "Data Sync Cleared")), None)
     progress_row = next((r for r in job_rows if r.get("action") == "Data Sync Progress"), None)
 
     status = "running"
     if end_row:
         if end_row.get("action") == "Data Sync Completed":
             status = "completed"
-        elif end_row.get("action") == "Data Sync Cancelled":
+        elif end_row.get("action") in ("Data Sync Cancelled", "Data Sync Cleared"):
             status = "cancelled"
         else:
             status = "failed"
@@ -2493,7 +2493,10 @@ def get_latest_manual_sync_state(user_email=None, lookback_rows=300):
     if status == "failed":
         message = "Beacon API sync failed."
     if status == "cancelled":
-        message = "Beacon API sync cancelled."
+        if end_row and end_row.get("action") == "Data Sync Cleared":
+            message = "Manual sync cleared by user."
+        else:
+            message = "Beacon API sync cancelled."
 
     state = {
         "job_id": job_id,
