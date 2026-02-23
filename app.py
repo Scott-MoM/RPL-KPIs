@@ -598,6 +598,59 @@ def _get_row_value(row, *keys):
             return normalized[nk]
     return None
 
+FUNDER_SCOPE_PREFIX = "FUNDER::"
+
+def _encode_funder_scope(funder_name):
+    name = str(funder_name or "").strip()
+    return f"{FUNDER_SCOPE_PREFIX}{name}" if name else ""
+
+def _decode_funder_scope(scope_value):
+    raw = str(scope_value or "").strip()
+    if raw.startswith(FUNDER_SCOPE_PREFIX):
+        return raw[len(FUNDER_SCOPE_PREFIX):].strip()
+    return ""
+
+def _extract_funder_name(row):
+    name = _get_row_value(
+        row,
+        "funder",
+        "funder_name",
+        "funding_body",
+        "funding_body_name",
+        "donor",
+        "donor_name",
+        "sponsor",
+        "sponsor_name",
+        "organisation",
+        "organization",
+        "organisation_name",
+        "organization_name",
+        "grantor",
+        "grantor_name",
+    )
+    if isinstance(name, dict):
+        name = _get_row_value(name, "name", "title", "display_name") or name.get("id")
+    if isinstance(name, list):
+        name = ", ".join(str(x) for x in name if str(x).strip())
+    value = str(name or "").strip()
+    return value if value else "Unknown / Not tagged"
+
+@st.cache_data(show_spinner=False, ttl=300)
+def get_available_funders(max_rows=2000):
+    funders = set()
+    if DB_TYPE == "supabase":
+        try:
+            pay_rows = DB_CLIENT.table("beacon_payments").select("payload").limit(max_rows).execute().data or []
+            grant_rows = DB_CLIENT.table("beacon_grants").select("payload").limit(max_rows).execute().data or []
+            for r in pay_rows + grant_rows:
+                payload = r.get("payload") or {}
+                name = _extract_funder_name(payload)
+                if name:
+                    funders.add(name)
+        except Exception:
+            pass
+    return sorted(funders, key=lambda x: x.lower())
+
 def _read_uploaded_csv(uploaded_file):
     if uploaded_file is None:
         return []
@@ -1626,6 +1679,22 @@ def update_user_role(email, new_role, audit_reason=None, audit_confirmed=False):
                 save_local_json(USER_DB_FILE, db_data)
                 return
 
+def update_user_region(email, new_region):
+    email = email.strip().lower()
+    if DB_TYPE == 'supabase':
+        admin_client = get_admin_client()
+        if not admin_client:
+            return
+        admin_client.table('user_roles').update({"region": new_region}).eq('email', email).execute()
+    else:
+        db_data = load_local_json(USER_DB_FILE, {"users": []})
+        users_list = db_data.get("users", [])
+        for user in users_list:
+            if user.get('email', '').strip().lower() == email:
+                user['region'] = new_region
+                save_local_json(USER_DB_FILE, db_data)
+                return
+
 def delete_user(email, audit_reason=None, audit_confirmed=False):
     email = email.strip().lower()
     if DB_TYPE == 'supabase':
@@ -1685,19 +1754,28 @@ def get_all_users():
             response = DB_CLIENT.table('user_roles').select("name, email, region, roles(name)").execute()
             rows = []
             for r in response.data or []:
+                role_name = (r.get("roles") or {}).get("name")
+                region_value = r.get("region")
+                if role_name == "Funder":
+                    region_value = _decode_funder_scope(region_value) or region_value
                 rows.append({
                     "name": r.get("name"),
                     "email": r.get("email"),
-                    "role": (r.get("roles") or {}).get("name"),
-                    "region": r.get("region")
+                    "role": role_name,
+                    "region": region_value
                 })
             return rows
         except:
             return []
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
-        # Return simplified list without passwords
-        return [{k: v for k, v in u.items() if k != 'password'} for u in db_data.get("users", [])]
+        out = []
+        for u in db_data.get("users", []):
+            row = {k: v for k, v in u.items() if k != 'password'}
+            if row.get("role") == "Funder":
+                row["region"] = _decode_funder_scope(row.get("region")) or row.get("region")
+            out.append(row)
+        return out
 
 # --- CASE STUDIES (CRUD) ---
 
@@ -2901,29 +2979,6 @@ def clear_dashboard_data_except_users(admin_client, progress_callback=None):
 
 # --- UI COMPONENTS ---
 
-def _query_param_first(params, key):
-    value = params.get(key)
-    if isinstance(value, list):
-        return value[0] if value else ""
-    return value
-
-def _get_query_params():
-    try:
-        params = dict(st.query_params)
-        return params
-    except Exception:
-        pass
-    try:
-        return st.experimental_get_query_params()
-    except Exception:
-        return {}
-
-def _is_public_funder_request():
-    params = _get_query_params()
-    public_flag = str(_query_param_first(params, "public") or "").strip().lower()
-    view_flag = str(_query_param_first(params, "view") or "").strip().lower()
-    return public_flag in ("funder", "funders") or view_flag in ("funder", "funders")
-
 def _gdpr_safe_count(value, threshold=5):
     try:
         n = int(value or 0)
@@ -2933,18 +2988,35 @@ def _gdpr_safe_count(value, threshold=5):
         return f"<{threshold}"
     return f"{max(0, n):,}"
 
-def funder_dashboard_public():
+def funder_dashboard():
     st.title("Funder Dashboard")
-    st.caption("Public view with GDPR-safe, aggregated metrics only. No personal data is shown.")
+    st.caption("GDPR-safe, aggregated metrics only. No personal data is shown.")
 
-    st.sidebar.markdown("### Public Access")
-    st.sidebar.caption("Viewing public funder dashboard (no login required).")
-    st.sidebar.markdown("[Staff Login](./)")
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 18:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+    st.sidebar.title(f"{greeting}, {st.session_state.get('name', 'User')}")
+    st.sidebar.info(f"Role: {st.session_state.get('role', 'Funder')}")
 
     region_options = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
+    role = st.session_state.get("role")
+    assigned_scope = st.session_state.get("region") or "Global"
+    assigned_funder = _decode_funder_scope(assigned_scope)
+    if role == "Funder" and not assigned_funder and assigned_scope not in ("", "Global"):
+        assigned_funder = assigned_scope
+
     c_region, c_tf = st.columns([1, 1])
     with c_region:
-        region_val = st.selectbox("Region", region_options, index=0, key="funder_region")
+        if role == "Funder":
+            region_val = "Global"
+            st.caption("Region: Global")
+        else:
+            default_index = region_options.index(assigned_scope) if assigned_scope in region_options else 0
+            region_val = st.selectbox("Region", region_options, index=default_index, key="funder_region")
     with c_tf:
         timeframe = st.selectbox("Timeframe", ["All Time", "Year", "Quarter", "Month", "Custom Range"], index=0, key="funder_timeframe")
 
@@ -2977,59 +3049,105 @@ def funder_dashboard_public():
         st.error("No dashboard data is available for this public view.")
         return
 
+    def _funder_key(value):
+        return _norm_key(value)
+
+    raw_income = data.get("_raw_income", {}) or {}
+    payments_all = raw_income.get("payments") or []
+    grants_all = raw_income.get("grants") or []
+    funder_map = {}
+    for row in payments_all + grants_all:
+        fname = _extract_funder_name(row)
+        fk = _funder_key(fname)
+        if fk and fk not in funder_map:
+            funder_map[fk] = fname
+
+    if role == "Funder":
+        selected_funder = assigned_funder or "Unknown / Not tagged"
+        selected_funder_key = _funder_key(selected_funder)
+        st.caption(f"Funder: {selected_funder}")
+    else:
+        funder_options = ["All Funders"] + sorted(funder_map.values(), key=lambda x: x.lower())
+        selected_funder = st.selectbox("Funder", funder_options, index=0, key="funder_selector")
+        selected_funder_key = _funder_key(selected_funder)
+
+    def _row_matches_funder(row):
+        if selected_funder == "All Funders":
+            return True
+        return _funder_key(_extract_funder_name(row)) == selected_funder_key
+
+    filtered_payments = [r for r in payments_all if _row_matches_funder(r)]
+    filtered_grants = [r for r in grants_all if _row_matches_funder(r)]
+
+    filtered_total_funds = sum(_coerce_money(r.get("amount")) for r in filtered_payments)
+    filtered_total_funds += sum(
+        _coerce_money(r.get("amount"))
+        for r in filtered_grants
+        if str(r.get("stage") or "").strip().lower() == "won"
+    )
+    filtered_bids_submitted = sum(
+        1
+        for r in filtered_grants
+        if any(x in str(r.get("stage") or "").lower() for x in ["submitted", "review", "pending"])
+    )
+
     last_refresh = get_last_refresh_timestamp()
     if last_refresh:
         st.caption(f"Last Data Refresh (UTC): {last_refresh.strftime('%d/%m/%Y %H:%M')}")
     else:
         st.caption("Last Data Refresh (UTC): Unknown")
 
-    g = data.get("governance", {})
-    p = data.get("partnerships", {})
-    d = data.get("delivery", {})
-    i = data.get("income", {})
+    if role != "Funder":
+        g = data.get("governance", {})
+        p = data.get("partnerships", {})
+        d = data.get("delivery", {})
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Active Volunteers", _gdpr_safe_count(g.get("volunteers_new", 0)))
+        m2.metric("Active Organisations", _gdpr_safe_count(p.get("active_referrals", 0)))
+        m3.metric("Delivery Events", _gdpr_safe_count(d.get("walks_delivered", 0)))
+        m4, m5, m6 = st.columns(3)
+        m4.metric("Participants Reached", _gdpr_safe_count(d.get("participants", 0)))
+        m5.metric("Bids Submitted (Selected Funder)", _gdpr_safe_count(filtered_bids_submitted))
+        m6.metric("Total Funds Raised (Selected Funder)", f"£{float(filtered_total_funds or 0):,.2f}")
+        st.caption("Funder filter applies to funding metrics and income trend. Non-funding metrics remain region/timeframe totals.")
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Active Volunteers", _gdpr_safe_count(g.get("volunteers_new", 0)))
-    m2.metric("Active Organisations", _gdpr_safe_count(p.get("active_referrals", 0)))
-    m3.metric("Delivery Events", _gdpr_safe_count(d.get("walks_delivered", 0)))
-    m4, m5, m6 = st.columns(3)
-    m4.metric("Participants Reached", _gdpr_safe_count(d.get("participants", 0)))
-    m5.metric("Bids Submitted", _gdpr_safe_count(i.get("bids_submitted", 0)))
-    m6.metric("Total Funds Raised", f"£{float(i.get('total_funds_raised') or 0):,.2f}")
+        st.markdown("### Partnership Mix")
+        mix_rows = []
+        for sector, count in (p.get("LSP") or {}).items():
+            mix_rows.append({"Type": "Strategic", "Sector": str(sector), "Count": int(count or 0)})
+        for sector, count in (p.get("LDP") or {}).items():
+            mix_rows.append({"Type": "Delivery", "Sector": str(sector), "Count": int(count or 0)})
+        mix_df = pd.DataFrame(mix_rows)
+        if not mix_df.empty:
+            fig_mix = px.bar(mix_df, x="Sector", y="Count", color="Type", barmode="group")
+            render_plot_with_export(fig_mix, "funder-partnership-mix", "funder_partnership_mix")
+        else:
+            st.info("No partnership data available for this selection.")
 
-    st.markdown("### Partnership Mix")
-    mix_rows = []
-    for sector, count in (p.get("LSP") or {}).items():
-        mix_rows.append({"Type": "Strategic", "Sector": str(sector), "Count": int(count or 0)})
-    for sector, count in (p.get("LDP") or {}).items():
-        mix_rows.append({"Type": "Delivery", "Sector": str(sector), "Count": int(count or 0)})
-    mix_df = pd.DataFrame(mix_rows)
-    if not mix_df.empty:
-        fig_mix = px.bar(mix_df, x="Sector", y="Count", color="Type", barmode="group")
-        render_plot_with_export(fig_mix, "funder-partnership-mix", "funder_partnership_mix")
+        st.markdown("### Delivery Demographics (Aggregated)")
+        demo_df = pd.DataFrame(
+            [{"Group": str(k), "Count": int(v or 0)} for k, v in (d.get("demographics") or {}).items()]
+        )
+        if not demo_df.empty:
+            demo_df = demo_df.sort_values("Count", ascending=False)
+            fig_demo = px.bar(demo_df, x="Group", y="Count")
+            render_plot_with_export(fig_demo, "funder-demographics", "funder_demographics")
+        else:
+            st.info("No demographic summary available for this selection.")
     else:
-        st.info("No partnership data available for this selection.")
+        m1, m2 = st.columns(2)
+        m1.metric("Bids Submitted", _gdpr_safe_count(filtered_bids_submitted))
+        m2.metric("Total Funds Raised", f"£{float(filtered_total_funds or 0):,.2f}")
 
-    st.markdown("### Delivery Demographics (Aggregated)")
-    demo_df = pd.DataFrame(
-        [{"Group": str(k), "Count": int(v or 0)} for k, v in (d.get("demographics") or {}).items()]
-    )
-    if not demo_df.empty:
-        demo_df = demo_df.sort_values("Count", ascending=False)
-        fig_demo = px.bar(demo_df, x="Group", y="Count")
-        render_plot_with_export(fig_demo, "funder-demographics", "funder_demographics")
-    else:
-        st.info("No demographic summary available for this selection.")
-
-    st.markdown("### Income Trend (Aggregated)")
+    st.markdown("### Income Trend (Aggregated, Funder Filtered)")
     income_rows = []
-    for row in (data.get("_raw_income", {}).get("payments") or []):
+    for row in filtered_payments:
         income_rows.append({
             "date": row.get("payment_date"),
             "source": "Payments",
             "amount": _coerce_money(row.get("amount")),
         })
-    for row in (data.get("_raw_income", {}).get("grants") or []):
+    for row in filtered_grants:
         income_rows.append({
             "date": row.get("close_date"),
             "source": "Grants",
@@ -3054,8 +3172,6 @@ def login_page():
         "<div class='neon-callout'>Please sign in with your email address.</div>",
         unsafe_allow_html=True
     )
-    st.markdown("[Open Public Funder Dashboard](?public=funder)")
-    
     if DB_TYPE == 'local':
         st.warning("Running in Local Mode. Add Supabase secrets to enable Cloud Database.")
         
@@ -3196,16 +3312,29 @@ def admin_dashboard():
         new_email = c2.text_input("Email")
         c3, c4 = st.columns(2)
         new_pw = c3.text_input("Password", type="password")
-        new_role = c4.selectbox("Role", ["RPL", "Manager", "Admin"])
-        new_region = st.text_input("Region (e.g., North West)")
+        new_role = c4.selectbox("Role", ["RPL", "Manager", "Admin", "Funder"])
+        selected_funder_name = ""
+        if new_role == "Funder":
+            funder_choices = get_available_funders()
+            if funder_choices:
+                selected_funder_name = st.selectbox("Funder Name", funder_choices, key="new_user_funder_name")
+            manual_funder = st.text_input("Or type funder name", key="new_user_funder_name_manual")
+            if manual_funder.strip():
+                selected_funder_name = manual_funder.strip()
+            new_region = _encode_funder_scope(selected_funder_name)
+        else:
+            new_region = st.text_input("Region (e.g., North West)")
         
         if st.button("Create User"):
             if new_email and new_pw:
-                if create_user(new_name, new_email, new_pw, new_role, new_region):
-                    st.success(f"User {new_email} created!")
-                    st.rerun()
+                if new_role == "Funder" and not selected_funder_name.strip():
+                    st.error("Please select or enter a funder name for this Funder user.")
                 else:
-                    st.error("User with this email already exists.")
+                    if create_user(new_name, new_email, new_pw, new_role, new_region):
+                        st.success(f"User {new_email} created!")
+                        st.rerun()
+                    else:
+                        st.error("User with this email already exists.")
             else:
                 st.error("Please fill in email and password.")
 
@@ -3231,7 +3360,15 @@ def admin_dashboard():
                 with col2:
                     st.subheader("Update Role")
                     target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
-                    new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin"], key="role_up")
+                    new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin", "Funder"], key="role_up")
+                    selected_update_funder = ""
+                    if new_role_update == "Funder":
+                        update_funder_choices = get_available_funders()
+                        if update_funder_choices:
+                            selected_update_funder = st.selectbox("Funder Name", update_funder_choices, key="role_up_funder_name")
+                        manual_update_funder = st.text_input("Or type funder name", key="role_up_funder_name_manual")
+                        if manual_update_funder.strip():
+                            selected_update_funder = manual_update_funder.strip()
                     role_reason = st.text_input("Reason for role change", key="role_reason")
                     role_confirm = st.checkbox("I confirm this role change", key="role_confirm")
                     if st.button("Update Role"):
@@ -3239,6 +3376,8 @@ def admin_dashboard():
                             st.error("Please provide a reason for the role update.")
                         elif not role_confirm:
                             st.error("Please confirm the role update.")
+                        elif new_role_update == "Funder" and not selected_update_funder.strip():
+                            st.error("Please select or enter a funder name for this Funder user.")
                         else:
                             update_user_role(
                                 target_role_email,
@@ -3246,6 +3385,8 @@ def admin_dashboard():
                                 audit_reason=role_reason.strip(),
                                 audit_confirmed=True,
                             )
+                            if new_role_update == "Funder":
+                                update_user_region(target_role_email, _encode_funder_scope(selected_update_funder))
                             st.success("Role updated.")
                             st.rerun()
 
@@ -4809,10 +4950,6 @@ def main():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
-    if _is_public_funder_request():
-        funder_dashboard_public()
-        return
-
     if not st.session_state['logged_in']:
         login_page()
     else:
@@ -4864,7 +5001,7 @@ def main():
         role = st.session_state.get('role')
         current_view = None
         if role == 'Admin':
-            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies"])
+            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "Admin Dashboard":
@@ -4873,20 +5010,29 @@ def main():
                 main_dashboard()
             elif view == "Custom Reports Dashboard":
                 custom_reports_dashboard()
+            elif view == "Funder Dashboard":
+                funder_dashboard()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Manager':
-            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies"])
+            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
             elif view == "Custom Reports Dashboard":
                 custom_reports_dashboard()
+            elif view == "Funder Dashboard":
+                funder_dashboard()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
+        elif role == 'Funder':
+            view = st.sidebar.radio("View Mode", ["Funder Dashboard"])
+            current_view = view
+            log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
+            funder_dashboard()
         else:
             view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies"])
             current_view = view
