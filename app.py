@@ -3260,20 +3260,33 @@ def login_page():
     with st.form("login_form"):
         st.text_input("Email Address", key="login_email")
         st.text_input("Password", type="password", key="login_password")
-        submitted = st.form_submit_button("Login")
-    
-    if st.button("Forgot password?"):
+        c_login, c_forgot = st.columns(2)
+        submitted = c_login.form_submit_button("Login", use_container_width=True)
+        forgot_submitted = c_forgot.form_submit_button("Forgot password?", use_container_width=True)
+
+    if forgot_submitted:
         email = st.session_state.get("login_email", "").strip().lower()
         if not email:
             st.error("Please enter your email address first.")
         else:
             if DB_TYPE == 'supabase':
                 try:
-                    DB_CLIENT.table("password_reset_requests").insert({
-                        "email": email,
-                        "status": "pending"
-                    }).execute()
-                    st.success("Request sent. An admin will set a temporary password.")
+                    existing_pending = (
+                        DB_CLIENT.table("password_reset_requests")
+                        .select("id")
+                        .eq("email", email)
+                        .eq("status", "pending")
+                        .limit(1)
+                        .execute()
+                    )
+                    if existing_pending.data:
+                        st.info("A reset request is already pending for this email.")
+                    else:
+                        DB_CLIENT.table("password_reset_requests").insert({
+                            "email": email,
+                            "status": "pending"
+                        }).execute()
+                        st.success("Request sent. An admin will set a temporary password.")
                 except Exception as e:
                     st.error(f"Could not submit request: {e}")
             else:
