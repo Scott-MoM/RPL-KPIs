@@ -3069,6 +3069,27 @@ def _gdpr_safe_count(value, threshold=5):
         return f"<{threshold}"
     return f"{max(0, n):,}"
 
+def _can_view_event_attendee_details():
+    role = str(st.session_state.get("role") or "").strip()
+    return role in ["Admin", "Manager", "ML"]
+
+def _sanitize_record_for_role(record):
+    if _can_view_event_attendee_details():
+        return record
+    if not isinstance(record, dict):
+        return record
+    redacted_keys = {
+        "participant_list",
+        "participants_list",
+        "participant_ids",
+        "participant_names",
+        "attendee_list",
+        "attendees_list",
+        "attendee_names",
+        "raw_event",
+    }
+    return {k: v for k, v in record.items() if k not in redacted_keys}
+
 def funder_dashboard():
     st.title("Funder Dashboard")
     st.caption("GDPR-safe, aggregated metrics only. No personal data is shown.")
@@ -3407,7 +3428,7 @@ def admin_dashboard():
         new_email = c2.text_input("Email")
         c3, c4 = st.columns(2)
         new_pw = c3.text_input("Password", type="password")
-        new_role = c4.selectbox("Role", ["RPL", "Manager", "Admin", "Funder"])
+        new_role = c4.selectbox("Role", ["RPL", "ML", "Manager", "Admin", "Funder"])
         selected_funder_name = ""
         if new_role == "Funder":
             funder_choices = get_available_funders()
@@ -3455,7 +3476,7 @@ def admin_dashboard():
                 with col2:
                     st.subheader("Update Role")
                     target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
-                    new_role_update = st.selectbox("New Role", ["RPL", "Manager", "Admin", "Funder"], key="role_up")
+                    new_role_update = st.selectbox("New Role", ["RPL", "ML", "Manager", "Admin", "Funder"], key="role_up")
                     selected_update_funder = ""
                     if new_role_update == "Funder":
                         update_funder_choices = get_available_funders()
@@ -3879,7 +3900,7 @@ def main_dashboard():
     st.sidebar.markdown("### Region Filter")
     role = st.session_state.get('role')
     default_region = st.session_state.get('region') or "Global"
-    if role in ["Admin", "Manager", "RPL"]:
+    if role in ["Admin", "Manager", "RPL", "ML"]:
         all_regions = st.sidebar.checkbox("All Regions", value=True)
         if all_regions:
             region_val = "Global"
@@ -3904,7 +3925,7 @@ def main_dashboard():
     st.markdown('<div class="section-card"><span class="badge">Live KPI Overview</span></div>', unsafe_allow_html=True)
 
     show_debug = False
-    if st.session_state.get("role") in ["Admin", "Manager", "RPL"]:
+    if st.session_state.get("role") in ["Admin", "Manager", "RPL", "ML"]:
         show_debug = st.sidebar.checkbox("Show KPI Debug", value=False, key="kpi_show_debug")
     if show_debug:
         debug = data.get("_debug") or {}
@@ -4027,7 +4048,7 @@ def main_dashboard():
             format_func=lambda idx: labels[idx],
         )
         st.caption(f"Selected: {labels[selected_idx]}")
-        selected = rows[selected_idx]
+        selected = _sanitize_record_for_role(rows[selected_idx])
         _render_readable_record(selected, key_prefix=f"{key}_record")
         with st.expander("Technical View (JSON)"):
             st.json(selected, expanded=False)
@@ -4205,10 +4226,11 @@ def main_dashboard():
                         empty_msg="No event source rows found for deeper drill-down.",
                     )
                     if selected_event:
+                        can_view_attendee_details = _can_view_event_attendee_details()
                         participant_list = selected_event.get("participant_list") or []
                         participant_ids = selected_event.get("participant_ids") or []
                         participant_count = _coerce_int(selected_event.get("participants"))
-                        if not participant_list:
+                        if can_view_attendee_details and not participant_list:
                             with st.spinner("Checking live attendee feed for this event..."):
                                 live = fetch_live_event_attendees(selected_event.get("id"))
                             if live.get("names"):
@@ -4217,6 +4239,9 @@ def main_dashboard():
                                 endpoint_used = live.get("endpoint")
                                 if endpoint_used:
                                     st.caption(f"Live attendee source used: {endpoint_used}")
+                        if not can_view_attendee_details:
+                            participant_list = []
+                            participant_ids = []
                         attendee_status = "Count only (no attendee names available)"
                         if participant_list:
                             attendee_status = "Attendee names available"
@@ -4232,10 +4257,14 @@ def main_dashboard():
                             _show_df_limited(ids_df, key="tbl_del_participants_ids", default_limit=250)
                             st.caption("Participant IDs found but names are not available in the current source rows.")
                         elif participant_count > 0:
-                            placeholder_rows = [f"Participant {i} (name unavailable)" for i in range(1, participant_count + 1)]
-                            placeholder_df = pd.DataFrame({"Participant": placeholder_rows})
-                            _show_df_limited(placeholder_df, key="tbl_del_participants_placeholder", default_limit=250)
-                            st.caption("Names are not included in current event source rows. Showing participant count placeholders.")
+                            if can_view_attendee_details:
+                                placeholder_rows = [f"Participant {i} (name unavailable)" for i in range(1, participant_count + 1)]
+                                placeholder_df = pd.DataFrame({"Participant": placeholder_rows})
+                                _show_df_limited(placeholder_df, key="tbl_del_participants_placeholder", default_limit=250)
+                                st.caption("Names are not included in current event source rows. Showing participant count placeholders.")
+                            else:
+                                st.metric("Total Attendees", participant_count)
+                                st.caption("Your role can view attendee totals only.")
                         else:
                             st.caption("No participant names are available for this event in the current source data.")
         with m3:
@@ -4570,7 +4599,7 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
     # Display Studies (Filtered by Region or All Regions)
     role = st.session_state.get("role")
     view_region = region_override or st.session_state.get("region", "Global")
-    if region_override is None and role in ["Admin", "Manager", "RPL"]:
+    if region_override is None and role in ["Admin", "Manager", "RPL", "ML"]:
         st.sidebar.markdown("### Case Studies Region")
         case_all_regions = st.sidebar.checkbox(
             "All Regions",
@@ -4590,7 +4619,7 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
             )
         st.sidebar.caption(f"Case Studies Region: {view_region}")
 
-    if view_region == "Global" and role in ["Admin", "Manager", "RPL"]:
+    if view_region == "Global" and role in ["Admin", "Manager", "RPL", "ML"]:
         display_studies = get_case_studies(None, start_date=start_date, end_date=end_date)
     else:
         display_studies = get_case_studies(view_region, start_date=start_date, end_date=end_date)
@@ -4824,7 +4853,7 @@ def custom_reports_dashboard():
 
     role = st.session_state.get('role')
     default_region = st.session_state.get('region') or "Global"
-    if role in ["Admin", "Manager", "RPL"]:
+    if role in ["Admin", "Manager", "RPL", "ML"]:
         all_regions = st.sidebar.checkbox("All Regions", value=True, key="reports_all_regions")
         if all_regions:
             region_val = "Global"

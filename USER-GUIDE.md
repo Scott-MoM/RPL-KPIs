@@ -22,8 +22,9 @@ If you cannot sign in, contact an Admin user.
 ---
 
 ## 3. Roles and access
-The app supports three roles:
+The app supports four roles:
 - `RPL`
+- `ML` (Mountain Leader)
 - `Manager`
 - `Admin`
 
@@ -69,9 +70,11 @@ When you click a KPI tile:
 
 ### Important for Delivery > Total Participants
 - You can select an event and see participant details.
-- If names exist in source data, names are shown.
-- If only IDs exist, IDs are shown.
-- If only a count exists, placeholder entries are shown (for example, `Participant 1 (name unavailable)`).
+- `ML`, `Manager`, and `Admin` users can view attendee names/IDs when available.
+- `RPL` users can view attendee totals only.
+- If names exist in source data, names are shown (for roles with attendee detail access).
+- If only IDs exist, IDs are shown (for roles with attendee detail access).
+- If only a count exists, detail-access roles see placeholder entries (for example, `Participant 1 (name unavailable)`).
 
 ---
 
@@ -158,4 +161,3 @@ If something is unclear:
 1. Take a screenshot
 2. Note the tab, metric, region, and timeframe
 3. Send this to your Admin/support contact
-
