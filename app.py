@@ -1625,8 +1625,14 @@ def verify_user(email, password):
 
     if not email or not password:
         return "missing_fields", None, None, None, None
-    
-    # A. SUPABASE STRATEGY
+
+    def _local_roles(user):
+        roles_field = user.get("roles")
+        if isinstance(roles_field, list) and roles_field:
+            return roles_field
+        role_val = user.get("role")
+        return [role_val] if role_val else []
+
     if DB_TYPE == 'supabase':
         try:
             auth_resp = DB_CLIENT.auth.sign_in_with_password({"email": email, "password": password})
@@ -1640,50 +1646,68 @@ def verify_user(email, password):
                 .execute()
             if not role_resp.data:
                 return "user_not_found", None, None, None, None
-            role_row = role_resp.data[0]
-            role_name = (role_row.get("roles") or {}).get("name")
-            region = role_row.get("region", "Global")
-            display_name = role_row.get("name") or auth_resp.user.email
-            must_change = bool(role_row.get("must_change_password", False))
-            return "success", role_name, region, display_name, must_change
+            rows = role_resp.data
+            role_names = []
+            region = rows[0].get("region", "Global")
+            display_name = rows[0].get("name") or auth_resp.user.email
+            must_change = False
+            for row in rows:
+                role_name = (row.get("roles") or {}).get("name")
+                if role_name:
+                    role_names.append(role_name)
+                if row.get("must_change_password"):
+                    must_change = True
+                if not display_name:
+                    display_name = row.get("name") or display_name
+            dedup_roles = [r for r in dict.fromkeys(role_names)]
+            if not dedup_roles:
+                dedup_roles = [role_name] if role_name else []
+            if not dedup_roles:
+                dedup_roles = ["RPL"]
+            primary_role = _primary_role_from_list(dedup_roles) or dedup_roles[0]
+            return "success", primary_role, region, display_name, must_change, dedup_roles
         except Exception as e:
             msg = str(e)
             if "Invalid login credentials" in msg:
                 return "wrong_password", None, None, None, None
             st.error(f"Database Error: {e}")
             return "error", None, None, None, None
-
-    # B. LOCAL STRATEGY
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
-        
+
         for i, user in enumerate(users_list):
             if str(user.get('email', '')).strip().lower() == email:
                 stored_pw = str(user.get('password', '')).strip()
-                
-                # Self-healing plain text check
+
                 if not stored_pw.startswith('$pbkdf2-sha256'):
                     if stored_pw == password:
                         new_hash = pbkdf2_sha256.hash(stored_pw)
                         users_list[i]['password'] = new_hash
                         db_data["users"] = users_list
                         save_local_json(USER_DB_FILE, db_data)
-                        return "success", user.get('role'), user.get('region', 'Global'), user.get('name', email), False
+                        roles = _local_roles(user)
+                        primary_role = _primary_role_from_list(roles) or user.get('role')
+                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
                     return "wrong_password", None, None, None, None
-                
+
                 try:
                     if pbkdf2_sha256.verify(password, stored_pw):
-                        return "success", user.get('role'), user.get('region', 'Global'), user.get('name', email), False
+                        roles = _local_roles(user)
+                        primary_role = _primary_role_from_list(roles) or user.get('role')
+                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
                 except ValueError:
                     pass
                 return "wrong_password", None, None, None, None
-                
+
         return "user_not_found", None, None, None, None
 
-def create_user(name, email, password, role, region):
+def create_user(name, email, password, roles, region):
     email = email.strip().lower()
     hashed_pw = pbkdf2_sha256.hash(password)
+    roles = [r for r in (roles or []) if r]
+    if not roles:
+        return False
     
     if DB_TYPE == 'supabase':
         try:
@@ -1699,25 +1723,27 @@ def create_user(name, email, password, role, region):
             })
             user_id = user_resp.user.id
 
-            # Look up role id
-            role_resp = admin_client.table("roles").select("id").eq("name", role).execute()
-            if not role_resp.data:
+            inserted = []
+            for role_name in roles:
+                role_resp = admin_client.table("roles").select("id").eq("name", role_name).execute()
+                if not role_resp.data:
+                    continue
+                role_id = role_resp.data[0]["id"]
+                admin_client.table('user_roles').insert({
+                    "user_id": user_id,
+                    "role_id": role_id,
+                    "region": region,
+                    "email": email,
+                    "name": name,
+                    "must_change_password": True
+                }).execute()
+                inserted.append(role_name)
+            if not inserted:
                 return False
-            role_id = role_resp.data[0]["id"]
-
-            # Insert role mapping
-            admin_client.table('user_roles').insert({
-                "user_id": user_id,
-                "role_id": role_id,
-                "region": region,
-                "email": email,
-                "name": name,
-                "must_change_password": True
-            }).execute()
 
             # --- AUDIT LOG ---
-            log_audit_event("User Created", {"target_email": email, "role": role, "region": region})
-            
+            log_audit_event("User Created", {"target_email": email, "roles": inserted, "region": region})
+           
             return True
         except Exception as e:
             st.error(f"Error creating user: {e}")
@@ -1733,38 +1759,56 @@ def create_user(name, email, password, role, region):
             "name": name, 
             "email": email, 
             "password": hashed_pw, 
-            "role": role, 
+            "roles": roles, 
+            "role": roles[0] if roles else "",
             "region": region
         })
         db_data["users"] = users_list
         save_local_json(USER_DB_FILE, db_data)
         return True
 
-def update_user_role(email, new_role, audit_reason=None, audit_confirmed=False):
+def update_user_roles(email, new_roles, audit_reason=None, audit_confirmed=False):
     email = email.strip().lower()
+    roles = [r for r in (new_roles or []) if r]
+    if not roles:
+        return
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
         if not admin_client:
             return
-        role_resp = admin_client.table("roles").select("id").eq("name", new_role).execute()
-        if not role_resp.data:
+        existing = admin_client.table('user_roles').select("user_id, region, name").eq('email', email).limit(1).execute()
+        if not existing.data:
             return
-        role_id = role_resp.data[0]["id"]
-        admin_client.table('user_roles').update({"role_id": role_id}).eq('email', email).execute()
-        
-        # --- AUDIT LOG ---
-        details = {"target_email": email, "new_role": new_role}
+        user_id = existing.data[0]["user_id"]
+        region = existing.data[0].get("region", "Global")
+        admin_client.table('user_roles').delete().eq('email', email).execute()
+        inserted = []
+        for role_name in roles:
+            role_resp = admin_client.table("roles").select("id").eq("name", role_name).execute()
+            if not role_resp.data:
+                continue
+            role_id = role_resp.data[0]["id"]
+            admin_client.table('user_roles').insert({
+                "user_id": user_id,
+                "role_id": role_id,
+                "region": region,
+                "email": email,
+                "name": existing.data[0].get("name"),
+                "must_change_password": True
+            }).execute()
+            inserted.append(role_name)
+        details = {"target_email": email, "new_roles": inserted}
         if audit_reason:
             details["reason"] = audit_reason
         details["confirmed"] = bool(audit_confirmed)
         log_audit_event("Role Updated", details)
-        
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
         for user in users_list:
             if user.get('email', '').strip().lower() == email:
-                user['role'] = new_role
+                user['roles'] = roles
+                user['role'] = roles[0]
                 save_local_json(USER_DB_FILE, db_data)
                 return
 
@@ -1841,30 +1885,64 @@ def get_all_users():
     if DB_TYPE == 'supabase':
         try:
             response = DB_CLIENT.table('user_roles').select("name, email, region, roles(name)").execute()
-            rows = []
+            users_map = {}
             for r in response.data or []:
+                email = str(r.get("email") or "").strip().lower()
+                if not email:
+                    continue
+                entry = users_map.setdefault(email, {
+                    "name": r.get("name"),
+                    "email": email,
+                    "roles": set(),
+                    "region": r.get("region")
+                })
                 role_name = (r.get("roles") or {}).get("name")
-                region_value = r.get("region")
-                if role_name == "Funder":
+                if role_name:
+                    entry["roles"].add(role_name)
+            rows = []
+            for entry in users_map.values():
+                region_value = entry.get("region")
+                if "Funder" in entry["roles"]:
                     region_value = _decode_funder_scope(region_value) or region_value
                 rows.append({
-                    "name": r.get("name"),
-                    "email": r.get("email"),
-                    "role": role_name,
+                    "name": entry.get("name"),
+                    "email": entry.get("email"),
+                    "role": ", ".join(sorted(entry["roles"])),
                     "region": region_value
                 })
             return rows
         except:
             return []
+        else:
+            db_data = load_local_json(USER_DB_FILE, {"users": []})
+            out = []
+            for u in db_data.get("users", []):
+                row = {k: v for k, v in u.items() if k != 'password'}
+                if row.get("role") == "Funder":
+                    row["region"] = _decode_funder_scope(row.get("region")) or row.get("region")
+                out.append(row)
+            return out
+
+def get_user_roles(email):
+    if not email:
+        return []
+    target = email.strip().lower()
+    if DB_TYPE == 'supabase':
+        try:
+            resp = DB_CLIENT.table('user_roles').select("roles(name)").eq("email", target).execute()
+            return [row.get("roles", {}).get("name") for row in resp.data or [] if row.get("roles", {}).get("name")]
+        except Exception:
+            return []
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
-        out = []
-        for u in db_data.get("users", []):
-            row = {k: v for k, v in u.items() if k != 'password'}
-            if row.get("role") == "Funder":
-                row["region"] = _decode_funder_scope(row.get("region")) or row.get("region")
-            out.append(row)
-        return out
+        for user in db_data.get("users", []):
+            if str(user.get('email', '')).strip().lower() == target:
+                roles = user.get("roles")
+                if isinstance(roles, list) and roles:
+                    return roles
+                role = user.get("role")
+                return [role] if role else []
+        return []
 
 # --- CASE STUDIES (CRUD) ---
 
@@ -3069,6 +3147,24 @@ def clear_dashboard_data_except_users(admin_client, progress_callback=None):
 
 # --- UI COMPONENTS ---
 
+ROLE_PRIORITY = ["Admin", "Manager", "ML", "RPL", "Funder"]
+
+def _primary_role_from_list(roles):
+    if not roles:
+        return None
+    normalized = [str(r).strip() for r in roles if r]
+    for candidate in ROLE_PRIORITY:
+        if candidate in normalized:
+            return candidate
+    return normalized[0]
+
+def _session_roles():
+    roles = st.session_state.get("roles")
+    if isinstance(roles, list) and roles:
+        return roles
+    fallback = st.session_state.get("role")
+    return [fallback] if fallback else []
+
 def _gdpr_safe_count(value, threshold=5):
     try:
         n = int(value or 0)
@@ -3091,8 +3187,8 @@ def _show_df_limited(df, key, default_limit=150):
         st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
 
 def _can_view_event_attendee_details():
-    role = str(st.session_state.get("role") or "").strip()
-    return role in ["Admin", "Manager", "ML"]
+    roles = _session_roles()
+    return any(r in ["Admin", "Manager", "ML"] for r in roles if r)
 
 def _sanitize_record_for_role(record):
     if _can_view_event_attendee_details():
@@ -3589,12 +3685,15 @@ def login_page():
     if submitted:
         email = st.session_state.get("login_email", "")
         password = st.session_state.get("login_password", "")
-        status, role, region, name, must_change = verify_user(email, password)
+        auth_result = verify_user(email, password)
+        status = auth_result[0]
         if status == "success":
+            _, role, region, name, must_change, roles = auth_result
             st.session_state['logged_in'] = True
             st.session_state['name'] = name
             st.session_state['email'] = email
             st.session_state['role'] = role
+            st.session_state['roles'] = roles or [role] if role else []
             st.session_state['region'] = region
             st.session_state['force_password_change'] = bool(must_change)
             st.rerun()
@@ -3701,9 +3800,10 @@ def admin_dashboard():
         new_email = c2.text_input("Email")
         c3, c4 = st.columns(2)
         new_pw = c3.text_input("Password", type="password")
-        new_role = c4.selectbox("Role", ["RPL", "ML", "Manager", "Admin", "Funder"])
+        role_choices = ["RPL", "ML", "Manager", "Admin", "Funder"]
+        new_roles = c4.multiselect("Roles", role_choices, default=["RPL"])
         selected_funder_name = ""
-        if new_role == "Funder":
+        if "Funder" in new_roles:
             funder_choices = get_available_funders()
             if funder_choices:
                 selected_funder_name = st.selectbox("Funder Name", funder_choices, key="new_user_funder_name")
@@ -3716,14 +3816,17 @@ def admin_dashboard():
         
         if st.button("Create User"):
             if new_email and new_pw:
-                if new_role == "Funder" and not selected_funder_name.strip():
+                if not new_roles:
+                    st.error("Please assign at least one role.")
+                    return
+                if "Funder" in new_roles and not selected_funder_name.strip():
                     st.error("Please select or enter a funder name for this Funder user.")
                 else:
-                    if create_user(new_name, new_email, new_pw, new_role, new_region):
+                    if create_user(new_name, new_email, new_pw, new_roles, new_region):
                         st.success(f"User {new_email} created!")
                         st.rerun()
                     else:
-                        st.error("User with this email already exists.")
+                        st.error("User with this email already exists (or role lookup failed).")
             else:
                 st.error("Please fill in email and password.")
 
@@ -3749,9 +3852,11 @@ def admin_dashboard():
                 with col2:
                     st.subheader("Update Role")
                     target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
-                    new_role_update = st.selectbox("New Role", ["RPL", "ML", "Manager", "Admin", "Funder"], key="role_up")
+                    role_choices = ["RPL", "ML", "Manager", "Admin", "Funder"]
+                    existing_roles = get_user_roles(target_role_email) or ["RPL"]
+                    new_role_update = st.multiselect("New Roles", role_choices, default=existing_roles, key="role_up")
                     selected_update_funder = ""
-                    if new_role_update == "Funder":
+                    if "Funder" in new_role_update:
                         update_funder_choices = get_available_funders()
                         if update_funder_choices:
                             selected_update_funder = st.selectbox("Funder Name", update_funder_choices, key="role_up_funder_name")
@@ -3765,18 +3870,20 @@ def admin_dashboard():
                             st.error("Please provide a reason for the role update.")
                         elif not role_confirm:
                             st.error("Please confirm the role update.")
-                        elif new_role_update == "Funder" and not selected_update_funder.strip():
+                        elif not new_role_update:
+                            st.error("Select at least one role.")
+                        elif "Funder" in new_role_update and not selected_update_funder.strip():
                             st.error("Please select or enter a funder name for this Funder user.")
                         else:
-                            update_user_role(
+                            update_user_roles(
                                 target_role_email,
                                 new_role_update,
                                 audit_reason=role_reason.strip(),
                                 audit_confirmed=True,
                             )
-                            if new_role_update == "Funder":
+                            if "Funder" in new_role_update:
                                 update_user_region(target_role_email, _encode_funder_scope(selected_update_funder))
-                            st.success("Role updated.")
+                            st.success("Roles updated.")
                             st.rerun()
 
                 with col3:
