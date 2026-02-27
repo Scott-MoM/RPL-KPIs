@@ -38,6 +38,7 @@ Use **View Mode** in the left sidebar:
 - `Custom Reports Dashboard`
 - `Case Studies`
 - `Admin Dashboard` (Admin only)
+- `ML Dashboard` (Mountain Leaders only)
 
 ---
 
@@ -154,9 +155,17 @@ Use these carefully, as they affect all users.
 - `Timeframe`: Date range filter applied to all metrics
 - `Global`: All regions combined
 
----
+--- 
 
-## 14. Need help?
+## 14. ML Dashboard
+
+Only Mountain Leaders (`ML` role) can see this dashboard. It filters Beacon events by region and timeframe, and it opens a single event at a time:
+1. Pick a region with the sidebar controls (or leave `All Regions` enabled) and choose your timeframe.
+2. Use the drop-down to select the event you need; the rest of the page updates automatically.
+3. Review the highlighted event details (location, type, total participants, description) plus the attendee list and IDs when the data is present.
+4. Scroll to the Medical Information and Emergency Contact sections to surface any supporting notes baked into the Beacon payload.
+
+## 15. Need help?
 If something is unclear:
 1. Take a screenshot
 2. Note the tab, metric, region, and timeframe

@@ -3090,6 +3090,139 @@ def _sanitize_record_for_role(record):
     }
     return {k: v for k, v in record.items() if k not in redacted_keys}
 
+def ml_dashboard():
+    st.title("Mountain Leader Dashboard")
+    st.caption("Select an event to see attendees plus medical and emergency contact details.")
+
+    region_options = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
+    default_region = st.session_state.get("region") or "Global"
+    st.sidebar.markdown("### Region Filter")
+    ml_all = st.sidebar.checkbox("All Regions", value=True, key="ml_all_regions")
+    if ml_all:
+        region_val = "Global"
+    else:
+        default_index = region_options.index(default_region) if default_region in region_options else 0
+        region_val = st.sidebar.selectbox("Region", region_options, index=default_index, key="ml_region")
+    st.sidebar.caption(f"Region: {region_val}")
+
+    timeframe, start_date, end_date = get_time_filters()
+
+    data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+    if not data:
+        st.error("No event data is available for the selected filters.")
+        return
+
+    raw_kpi = data.get("_raw_kpi") or {}
+    events = raw_kpi.get("delivery_events") or []
+    if not events:
+        st.info("No delivery events available for the current region/timeframe.")
+        return
+
+    def _format_date(value):
+        if not value:
+            return "Unknown date"
+        try:
+            return pd.to_datetime(value).strftime("%Y-%m-%d")
+        except Exception:
+            return str(value)
+
+    def _event_label(event):
+        raw = event.get("raw_event") or {}
+        name = _get_row_value(
+            event,
+            "name",
+            "title",
+            "event_name",
+            "Display Name",
+        ) or _get_row_value(raw, "name", "title", "event_name", "Display Name") or str(event.get("id") or raw.get("id") or "Unnamed Event")
+        date_value = event.get("date") or raw.get("start_date") or raw.get("date")
+        return f"{name} ({_format_date(date_value)})"
+
+    sorted_events = sorted(
+        events,
+        key=lambda e: _format_date(e.get("date") or (e.get("raw_event") or {}).get("start_date") or ""),
+        reverse=True,
+    )
+    labels = [_event_label(e) for e in sorted_events]
+    selected_idx = st.selectbox(
+        "Event",
+        list(range(len(sorted_events))),
+        format_func=lambda idx: labels[idx],
+        key="ml_event_select",
+    )
+    selected_event = sorted_events[selected_idx]
+    raw_event = selected_event.get("raw_event") or {}
+
+    def _format_value(value):
+        if value is None:
+            return ""
+        if isinstance(value, (list, dict)):
+            try:
+                return json.dumps(value)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    metadata = []
+    def _append_metadata(label, value):
+        formatted = _format_value(value)
+        if formatted:
+            metadata.append({"Field": label, "Value": formatted})
+
+    _append_metadata("Event ID", selected_event.get("id") or raw_event.get("id"))
+    _append_metadata("Event Name", _get_row_value(selected_event, "name", "title", "event_name", "Display Name"))
+    _append_metadata("Date", selected_event.get("date") or raw_event.get("start_date") or raw_event.get("date"))
+    _append_metadata("Region", ", ".join(_to_list(raw_event.get("c_region") or raw_event.get("region") or "")))
+    _append_metadata("Event Type", raw_event.get("type") or raw_event.get("category"))
+    _append_metadata("Participants (Beacon)", selected_event.get("participants"))
+    _append_metadata("Participants (Recorded)", raw_event.get("number_of_attendees") or raw_event.get("Attendees"))
+    _append_metadata("Location", raw_event.get("location") or raw_event.get("venue"))
+    _append_metadata("Status", raw_event.get("status"))
+    _append_metadata("Description", raw_event.get("description"))
+
+    if metadata:
+        st.subheader("Event Details")
+        _show_df_limited(pd.DataFrame(metadata), key="ml_event_metadata")
+
+    attendee_names = selected_event.get("participant_list") or []
+    attendee_ids = selected_event.get("participant_ids") or []
+    if attendee_names:
+        st.subheader("Attendee Names")
+        _show_df_limited(pd.DataFrame({"Name": attendee_names}), key="ml_attendee_names", default_limit=250)
+    if attendee_ids:
+        st.subheader("Attendee IDs")
+        _show_df_limited(pd.DataFrame({"Attendee ID": attendee_ids}), key="ml_attendee_ids", default_limit=250)
+    if not attendee_names and not attendee_ids:
+        st.info("Attendee names/IDs are not yet available in this event source.")
+
+    def _find_fields(record, keywords):
+        fields = {}
+        if not isinstance(record, dict):
+            return fields
+        for key, value in record.items():
+            if value in [None, "", [], {}]:
+                continue
+            key_lower = str(key).lower()
+            if any(term in key_lower for term in keywords):
+                fields[_pretty_field_name(key)] = value
+        return fields
+
+    medical_info = _find_fields(raw_event, ("medical", "health", "medication", "condition", "allergy"))
+    emergency_info = _find_fields(raw_event, ("emergency", "emergency_contact", "next_of_kin", "contact", "phone"))
+
+    def _render_section(title, info, key_prefix):
+        if not info:
+            return
+        rows = [{"Field": k, "Value": _format_value(v)} for k, v in info.items()]
+        st.subheader(title)
+        _show_df_limited(pd.DataFrame(rows), key=f"ml_{key_prefix}", default_limit=50)
+
+    _render_section("Medical Information", medical_info, "medical")
+    _render_section("Emergency Contact Details", emergency_info, "emergency")
+
+    with st.expander("Raw Event Payload"):
+        st.json(raw_event)
+
 def funder_dashboard():
     st.title("Funder Dashboard")
     st.caption("GDPR-safe, aggregated metrics only. No personal data is shown.")
@@ -5149,6 +5282,15 @@ def main():
                 custom_reports_dashboard()
             elif view == "Funder Dashboard":
                 funder_dashboard()
+            else:
+                timeframe, start_date, end_date = get_time_filters()
+                case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
+        elif role == 'ML':
+            view = st.sidebar.radio("View Mode", ["ML Dashboard", "Case Studies"])
+            current_view = view
+            log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
+            if view == "ML Dashboard":
+                ml_dashboard()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
