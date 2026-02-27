@@ -3069,6 +3069,18 @@ def _gdpr_safe_count(value, threshold=5):
         return f"<{threshold}"
     return f"{max(0, n):,}"
 
+def _show_df_limited(df, key, default_limit=150):
+    if df is None or df.empty:
+        st.caption("No rows found for this selection.")
+        return
+    total_rows = len(df)
+    show_all = st.checkbox(f"Show all rows ({total_rows})", key=f"{key}_show_all", value=False)
+    if show_all or total_rows <= default_limit:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.dataframe(df.head(default_limit), use_container_width=True, hide_index=True)
+        st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
+
 def _can_view_event_attendee_details():
     role = str(st.session_state.get("role") or "").strip()
     return role in ["Admin", "Manager", "ML"]
@@ -4092,18 +4104,6 @@ def main_dashboard():
     def _details_enabled(key, label="Load drill-down details"):
         st.caption(label)
         return True
-
-    def _show_df_limited(df, key, default_limit=150):
-        if df is None or df.empty:
-            st.caption("No rows found for this selection.")
-            return
-        total_rows = len(df)
-        show_all = st.checkbox(f"Show all rows ({total_rows})", key=f"{key}_show_all", value=False)
-        if show_all or total_rows <= default_limit:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(df.head(default_limit), use_container_width=True, hide_index=True)
-            st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
 
     def _pretty_field_name(name):
         return str(name).replace("_", " ").strip().title()
