@@ -3207,6 +3207,93 @@ def ml_dashboard():
     if not attendee_names and not attendee_ids:
         st.info("Attendee names/IDs are not yet available in this event source.")
 
+    people_rows = raw_kpi.get("region_people") or []
+    def _normalize_name(value):
+        return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
+    people_by_name = {}
+    people_by_id = {}
+    for person in people_rows:
+        person_id = person.get("id")
+        name_val = _get_row_value(person, "name", "full_name", "Display Name", "email") or person_id
+        norm = _normalize_name(name_val)
+        if norm:
+            people_by_name.setdefault(norm, person)
+        if person_id:
+            people_by_id[str(person_id)] = person
+
+    attendee_options = []
+    seen_attendees = set()
+    def _add_option(label, name, att_id):
+        key = (label.strip().lower(), str(att_id or ""))
+        if key in seen_attendees:
+            return
+        seen_attendees.add(key)
+        display = label or f"Attendee {len(attendee_options)+1}"
+        if att_id:
+            display = f"{display} ({att_id})"
+        attendee_options.append({"label": display, "name": name, "id": att_id})
+
+    for idx, name in enumerate(attendee_names):
+        idx_id = attendee_ids[idx] if idx < len(attendee_ids) else None
+        _add_option(str(name).strip() or f"Attendee {idx+1}", name, idx_id)
+    for att_id in attendee_ids:
+        _add_option(f"Attendee {att_id}", None, att_id)
+
+    selected_person = None
+    if attendee_options:
+        selected_idx = st.selectbox(
+            "Select attendee for details",
+            list(range(len(attendee_options))),
+            format_func=lambda idx: attendee_options[idx]["label"],
+            key="ml_attendee_select",
+        )
+        selected_entry = attendee_options[selected_idx]
+        st.markdown(f"**Details for:** {selected_entry['label']}")
+        person_record = None
+        person_id = selected_entry.get("id")
+        if person_id and str(person_id) in people_by_id:
+            person_record = people_by_id[str(person_id)]
+        if not person_record and selected_entry.get("name"):
+            norm = _normalize_name(selected_entry["name"])
+            person_record = people_by_name.get(norm)
+        selected_person = person_record
+    else:
+        st.caption("No attendee records available to view details.")
+
+    def _collect_fields(record, keywords):
+        rows = []
+        if not isinstance(record, dict):
+            return rows
+        for key, value in record.items():
+            if value in [None, "", [], {}]:
+                continue
+            key_lower = str(key).lower()
+            if any(term in key_lower for term in keywords):
+                rows.append({"Field": _pretty_field_name(key), "Value": _format_value(value)})
+        return rows
+
+    if selected_person:
+        personal_keywords = ("name", "full_name", "display_name", "email", "phone", "mobile", "telephone", "dob", "date_of_birth", "address", "postcode")
+        medical_keywords = ("medical", "health", "medication", "condition", "allergy")
+        emergency_keywords = ("emergency", "emergency_contact", "next_of_kin", "contact_person", "contact_name", "contact_phone")
+
+        personal_rows = _collect_fields(selected_person, personal_keywords)
+        medical_rows = _collect_fields(selected_person, medical_keywords)
+        emergency_rows = _collect_fields(selected_person, emergency_keywords)
+
+        if personal_rows:
+            st.subheader("Personal Information")
+            _show_df_limited(pd.DataFrame(personal_rows), key="ml_attendee_personal", default_limit=25)
+        if medical_rows:
+            st.subheader("Medical Information")
+            _show_df_limited(pd.DataFrame(medical_rows), key="ml_attendee_medical", default_limit=25)
+        if emergency_rows:
+            st.subheader("Emergency Contact Details")
+            _show_df_limited(pd.DataFrame(emergency_rows), key="ml_attendee_emergency", default_limit=25)
+        if not any((personal_rows, medical_rows, emergency_rows)):
+            st.info("No additional details were found for this attendee.")
+
     def _find_fields(record, keywords):
         fields = {}
         if not isinstance(record, dict):
