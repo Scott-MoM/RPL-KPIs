@@ -5258,7 +5258,7 @@ def main():
         role = st.session_state.get('role')
         current_view = None
         if role == 'Admin':
-            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard"])
+            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard", "ML Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "Admin Dashboard":
@@ -5269,11 +5269,13 @@ def main():
                 custom_reports_dashboard()
             elif view == "Funder Dashboard":
                 funder_dashboard()
+            elif view == "ML Dashboard":
+                ml_dashboard()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Manager':
-            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard"])
+            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard", "ML Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
@@ -5282,6 +5284,8 @@ def main():
                 custom_reports_dashboard()
             elif view == "Funder Dashboard":
                 funder_dashboard()
+            elif view == "ML Dashboard":
+                ml_dashboard()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
