@@ -1420,6 +1420,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             "email",
         )
 
+    event_attendee_records = {}
     for row in datasets.get("event_attendees") or []:
         att = _sanitize(_extract_entity(row))
         event_id = _attendee_event_id(att)
@@ -1434,6 +1435,11 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             bucket["ids"].add(str(person_id))
         if name:
             bucket["names"].add(str(name).strip())
+        norm_event_id = _id_key(event_id)
+        records_bucket = event_attendee_records.setdefault(event_id, [])
+        records_bucket.append(att)
+        if norm_event_id and norm_event_id != event_id:
+            event_attendee_records.setdefault(norm_event_id, []).append(att)
 
     event_seen = {}
     for row in datasets["events"]:
@@ -1459,12 +1465,14 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             entity["number_of_attendees"] = direct_count
         else:
             entity["number_of_attendees"] = existing_count
+        attendee_records_for_event = event_attendee_records.get(str(rec_id)) or event_attendee_records.get(_id_key(rec_id)) or []
         event_seen[rec_id] = {
             "id": rec_id,
             "payload": entity,
             "start_date": entity.get("start_date"),
             "region": (entity.get("c_region") or [None])[0],
             "updated_at": now_iso,
+            "attendee_records": attendee_records_for_event,
         }
 
     payment_seen = {}
@@ -2346,6 +2354,7 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "delivery_events": delivery_events,
             "region_grants": region_grants,
             "region_payments": region_payments,
+            "event_attendee_records": event_attendee_records,
         }
     }
 
@@ -3222,25 +3231,49 @@ def ml_dashboard():
         if person_id:
             people_by_id[str(person_id)] = person
 
+    attendee_records = selected_event.get("attendee_records") or []
     attendee_options = []
     seen_attendees = set()
-    def _add_option(label, name, att_id):
-        key = (label.strip().lower(), str(att_id or ""))
+
+    def _add_option(label, name=None, att_id=None, record=None):
+        key = (label.strip().lower(), str(att_id or ""), bool(record))
         if key in seen_attendees:
             return
         seen_attendees.add(key)
         display = label or f"Attendee {len(attendee_options)+1}"
         if att_id:
             display = f"{display} ({att_id})"
-        attendee_options.append({"label": display, "name": name, "id": att_id})
+        attendee_options.append({"label": display, "name": name, "id": att_id, "record": record})
+
+    def _person_id_from_record(rec):
+        return _get_row_value(rec, "person_id", "contact_id", "participant_id", "attendee_id", "id")
+
+    for rec in attendee_records:
+        name_val = _get_row_value(
+            rec,
+            "name",
+            "full_name",
+            "display_name",
+            "participant_name",
+            "attendee_name",
+            "person_name",
+            "contact_name",
+            "email",
+        )
+        if name_val:
+            display_name = str(name_val).strip()
+        else:
+            display_name = None
+        person_id = _person_id_from_record(rec)
+        label = display_name or person_id or f"Attendee {len(attendee_options)+1}"
+        _add_option(label, display_name, person_id, record=rec)
 
     for idx, name in enumerate(attendee_names):
         idx_id = attendee_ids[idx] if idx < len(attendee_ids) else None
-        _add_option(str(name).strip() or f"Attendee {idx+1}", name, idx_id)
-    for att_id in attendee_ids:
-        _add_option(f"Attendee {att_id}", None, att_id)
+        _add_option(str(name).strip(), name, idx_id)
 
     selected_person = None
+    selected_record = None
     if attendee_options:
         selected_idx = st.selectbox(
             "Select attendee for details",
@@ -3250,6 +3283,7 @@ def ml_dashboard():
         )
         selected_entry = attendee_options[selected_idx]
         st.markdown(f"**Details for:** {selected_entry['label']}")
+        selected_record = selected_entry.get("record")
         person_record = None
         person_id = selected_entry.get("id")
         if person_id and str(person_id) in people_by_id:
@@ -3257,30 +3291,37 @@ def ml_dashboard():
         if not person_record and selected_entry.get("name"):
             norm = _normalize_name(selected_entry["name"])
             person_record = people_by_name.get(norm)
-        selected_person = person_record
+        selected_person = person_record or selected_record
     else:
         st.caption("No attendee records available to view details.")
 
-    def _collect_fields(record, keywords):
+    def _collect_fields(sources, keywords):
         rows = []
-        if not isinstance(record, dict):
-            return rows
-        for key, value in record.items():
-            if value in [None, "", [], {}]:
+        seen = set()
+        for record in sources:
+            if not isinstance(record, dict):
                 continue
-            key_lower = str(key).lower()
-            if any(term in key_lower for term in keywords):
-                rows.append({"Field": _pretty_field_name(key), "Value": _format_value(value)})
+            for key, value in record.items():
+                if value in [None, "", [], {}]:
+                    continue
+                key_lower = str(key).lower()
+                if any(term in key_lower for term in keywords):
+                    label = _pretty_field_name(key)
+                    if label in seen:
+                        continue
+                    seen.add(label)
+                    rows.append({"Field": label, "Value": _format_value(value)})
         return rows
 
-    if selected_person:
+    if selected_person or selected_record:
+        sources = [selected_record, selected_person]
         personal_keywords = ("name", "full_name", "display_name", "email", "phone", "mobile", "telephone", "dob", "date_of_birth", "address", "postcode")
         medical_keywords = ("medical", "health", "medication", "condition", "allergy")
         emergency_keywords = ("emergency", "emergency_contact", "next_of_kin", "contact_person", "contact_name", "contact_phone")
 
-        personal_rows = _collect_fields(selected_person, personal_keywords)
-        medical_rows = _collect_fields(selected_person, medical_keywords)
-        emergency_rows = _collect_fields(selected_person, emergency_keywords)
+        personal_rows = _collect_fields(sources, personal_keywords)
+        medical_rows = _collect_fields(sources, medical_keywords)
+        emergency_rows = _collect_fields(sources, emergency_keywords)
 
         if personal_rows:
             st.subheader("Personal Information")
