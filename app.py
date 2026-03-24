@@ -557,7 +557,7 @@ def render_plot_with_export(fig, export_name, key_prefix):
         },
         "displaylogo": False,
     }
-    st.plotly_chart(fig, use_container_width=True, config=plot_config)
+    st.plotly_chart(fig, width="stretch", config=plot_config)
     try:
         img_bytes = pio.to_image(fig, format="png", width=1400, height=900, scale=2)
         st.download_button(
@@ -2013,7 +2013,9 @@ def get_case_studies(region_filter=None, start_date=None, end_date=None):
 
 # --- BEACON CRM INTEGRATION (LIVE) ---
 
-def compute_kpis(region, people, organisations, events, payments, grants):
+def compute_kpis(region, people, organisations, events, payments, grants, event_attendee_records=None):
+    if event_attendee_records is None:
+        event_attendee_records = {}
     # 2. Filter Helpers
     def get_region_tags(record):
         return _to_list(record.get('c_region'))
@@ -3188,9 +3190,9 @@ def _show_df_limited(df, key, default_limit=150):
     total_rows = len(df)
     show_all = st.checkbox(f"Show all rows ({total_rows})", key=f"{key}_show_all", value=False)
     if show_all or total_rows <= default_limit:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
     else:
-        st.dataframe(df.head(default_limit), use_container_width=True, hide_index=True)
+        st.dataframe(df.head(default_limit), width="stretch", hide_index=True)
         st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
 
 def _can_view_event_attendee_details():
@@ -3658,8 +3660,8 @@ def login_page():
         st.text_input("Email Address", key="login_email")
         st.text_input("Password", type="password", key="login_password")
         c_login, c_forgot = st.columns(2)
-        submitted = c_login.form_submit_button("Login", use_container_width=True)
-        forgot_submitted = c_forgot.form_submit_button("Forgot password?", use_container_width=True)
+        submitted = c_login.form_submit_button("Login", width="stretch")
+        forgot_submitted = c_forgot.form_submit_button("Forgot password?", width="stretch")
 
     if forgot_submitted:
         email = st.session_state.get("login_email", "").strip().lower()
@@ -3842,7 +3844,7 @@ def admin_dashboard():
     if users_data:
         df_users = pd.DataFrame(users_data)
         with st.expander("Existing Users & Actions", expanded=False):
-            st.dataframe(df_users, use_container_width=True)
+            st.dataframe(df_users, width="stretch")
             
             if not df_users.empty:
                 user_emails = df_users['email'].tolist()
@@ -4183,7 +4185,7 @@ def admin_dashboard():
 
                     st.dataframe(
                         df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
                 else:
@@ -4372,7 +4374,7 @@ def main_dashboard():
             scalar_df = pd.DataFrame(
                 [{"Field": k, "Value": ("" if v is None else v)} for k, v in scalar_rows]
             )
-            st.dataframe(scalar_df, use_container_width=True, hide_index=True)
+            st.dataframe(scalar_df, width="stretch", hide_index=True)
 
         for k, v in list_rows:
             label = _pretty_field_name(k)
@@ -4398,7 +4400,7 @@ def main_dashboard():
                 nested_df = pd.DataFrame(
                     [{"Field": _pretty_field_name(kk), "Value": ("" if vv is None else vv)} for kk, vv in nested_scalars.items()]
                 )
-                st.dataframe(nested_df, use_container_width=True, hide_index=True)
+                st.dataframe(nested_df, width="stretch", hide_index=True)
             else:
                 st.caption("Nested structured data available.")
 
@@ -4454,7 +4456,7 @@ def main_dashboard():
         with c1:
             with st.popover(
                 f"Steering Group Active\n{'Yes' if data['governance']['steering_group_active'] else 'No'}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.caption("Derived from steering volunteer tags in current filtered data.")
                 if _details_enabled("lazy_gov_steering_active"):
@@ -4467,7 +4469,7 @@ def main_dashboard():
         with c2:
             with st.popover(
                 f"Active Volunteers\n{data['governance']['steering_members']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 if _details_enabled("lazy_gov_steering_members"):
                     steering_df = _rows_to_df(
@@ -4492,7 +4494,7 @@ def main_dashboard():
         with c3:
             with st.popover(
                 f"New Volunteers\n{data['governance']['volunteers_new']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 if _details_enabled("lazy_gov_new_volunteers"):
                     volunteers_df = _rows_to_df(
@@ -4531,7 +4533,7 @@ def main_dashboard():
         with c1:
             with st.popover(
                 f"Active Orgs in Region\n{data['partnerships']['active_referrals']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.markdown("**List of Organisations**")
                 if _details_enabled("lazy_part_active_orgs"):
@@ -4557,7 +4559,7 @@ def main_dashboard():
         with c2:
             with st.popover(
                 f"Network Memberships\n{data['partnerships']['networks_sat_on']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.markdown("**Network Memberships**")
                 st.caption("No direct source field is currently mapped for this metric.")
@@ -4571,7 +4573,7 @@ def main_dashboard():
         with m1:
             with st.popover(
                 f"Events\n{data['delivery']['walks_delivered']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.markdown("**List of Attendees by Event**")
                 if _details_enabled("lazy_del_events"):
@@ -4597,7 +4599,7 @@ def main_dashboard():
         with m2:
             with st.popover(
                 f"Total Participants\n{data['delivery']['participants']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 if _details_enabled("lazy_del_participants"):
                     delivery_events = raw_kpi.get("delivery_events") or []
@@ -4657,14 +4659,14 @@ def main_dashboard():
         with m3:
             with st.popover(
                 f"Bursary Participants\n{data['delivery']['bursary_participants']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.caption("No raw source fields are currently mapped for this metric in Beacon.")
                 st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         with m4:
             with st.popover(
                 f"Avg Wellbeing Change\n+{data['delivery']['wellbeing_change_score']}",
-                use_container_width=True,
+                width="stretch",
             ):
                 st.caption("No raw source fields are currently mapped for this metric in Beacon.")
                 st.caption("No deeper drill-down source rows are mapped for this metric yet.")
@@ -4673,7 +4675,7 @@ def main_dashboard():
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
         st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-        st.dataframe(df_demo, use_container_width=True, hide_index=True)
+        st.dataframe(df_demo, width="stretch", hide_index=True)
         if demo_source == "people_type_tags":
             st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
         elif demo_source == "event_type_split":
@@ -4690,7 +4692,7 @@ def main_dashboard():
             with c1:
                 with st.popover(
                     f"Total Funds Raised\n£{data['income']['total_funds_raised']:,.2f}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     if _details_enabled("lazy_inc_total_funds"):
                         payment_rows = []
@@ -4724,14 +4726,14 @@ def main_dashboard():
                         )
                 with st.popover(
                     f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     st.caption("No raw source field is currently mapped for this metric.")
                     st.caption("No deeper drill-down source rows are mapped for this metric yet.")
             with c2:
                 with st.popover(
                     f"Bids Submitted\n{data['income']['bids_submitted']}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     if _details_enabled("lazy_inc_bids"):
                         grant_rows = []
@@ -4757,7 +4759,7 @@ def main_dashboard():
                         )
                 with st.popover(
                     f"Corporate Partners\n{data['income']['corporate_partners']}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     if _details_enabled("lazy_inc_corp"):
                         corp_rows = raw_kpi.get("corporate_orgs") or []
@@ -4837,7 +4839,7 @@ def main_dashboard():
 
                     df_income = df_income.groupby([pd.Grouper(key="date", freq=freq), "source"], as_index=False)["amount"].sum()
                     st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-                    st.dataframe(df_income.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+                    st.dataframe(df_income.sort_values("date", ascending=False), width="stretch", hide_index=True)
                 else:
                     st.info("No dated income records found for this period.")
             else:
@@ -4848,16 +4850,16 @@ def main_dashboard():
             st.header("Communications & Profile")
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                with st.popover(f"Press Releases\n{data['comms']['press_releases']}", use_container_width=True):
+                with st.popover(f"Press Releases\n{data['comms']['press_releases']}", width="stretch"):
                     st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
             with c2:
-                with st.popover(f"Media Coverage\n{data['comms']['media_coverage']}", use_container_width=True):
+                with st.popover(f"Media Coverage\n{data['comms']['media_coverage']}", width="stretch"):
                     st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
             with c3:
-                with st.popover(f"Newsletters Sent\n{data['comms']['newsletters_sent']}", use_container_width=True):
+                with st.popover(f"Newsletters Sent\n{data['comms']['newsletters_sent']}", width="stretch"):
                     st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
             with c4:
-                with st.popover(f"Open Rate\n{data['comms']['open_rate']}%", use_container_width=True):
+                with st.popover(f"Open Rate\n{data['comms']['open_rate']}%", width="stretch"):
                     st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
             st.caption("Click a metric above to open its drill-down popup.")
 
@@ -5338,7 +5340,7 @@ def custom_reports_dashboard():
         sort_desc = st.checkbox("Sort descending", value=True, key="reports_table_sort_desc")
         row_limit = st.number_input("Max rows", min_value=10, max_value=5000, value=500, step=10, key="reports_table_row_limit")
         table_df = table_df.sort_values(sort_col, ascending=not sort_desc, na_position="last").head(int(row_limit))
-        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        st.dataframe(table_df, width="stretch", hide_index=True)
         return
 
     agg_col = st.selectbox("Group By", dims, key="reports_group_col")
