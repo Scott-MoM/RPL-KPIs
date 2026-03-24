@@ -2048,11 +2048,11 @@ def compute_kpis(region, people, organisations, events, payments, grants):
 
     # 4. Process Organisations (Partnerships)
     region_orgs = [o for o in organisations if is_in_region(o)]
+    all_orgs = list(organisations or [])
     org_id_to_region = {o.get('id'): True for o in region_orgs if o.get('id') is not None}
     
     lsp_counts = {}
     ldp_counts = {}
-    corporate_count = 0
     corporate_orgs = []
     
     for org in region_orgs:
@@ -2066,13 +2066,15 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         else:
             ldp_counts[org_type] = ldp_counts.get(org_type, 0) + 1
             
-        # Specific count for corporate
-        if "business" in org_type.lower() or "corporate" in org_type.lower():
-            corporate_count += 1
+    for org in all_orgs:
+        org_type = str(org.get('type') or "").strip().lower()
+        if "business" in org_type or "corporate" in org_type:
             corporate_orgs.append(org)
 
+    corporate_count = len(corporate_orgs)
+
     # 5. Process Income
-    region_grants = []
+    global_grants = []
     for g in grants:
         org_link = g.get('organization')
         linked_id = None
@@ -2080,13 +2082,16 @@ def compute_kpis(region, people, organisations, events, payments, grants):
         elif isinstance(org_link, str): linked_id = org_link
         
         if linked_id and linked_id in org_id_to_region:
-            region_grants.append(g)
+            global_grants.append(g)
         elif region == "Global":
-            region_grants.append(g)
+            global_grants.append(g)
+
+    if region != "Global":
+        global_grants = list(grants or [])
             
     # Fuzzy match for grant stages
-    bids_submitted = sum(1 for g in region_grants if any(x in str(g.get('stage')).lower() for x in ['submitted', 'review', 'pending']))
-    funds_raised_grants = sum(_coerce_money(g.get('amount')) for g in region_grants if str(g.get('stage')).lower() == 'won')
+    bids_submitted = sum(1 for g in global_grants if any(x in str(g.get('stage')).lower() for x in ['submitted', 'review', 'pending']))
+    funds_raised_grants = sum(_coerce_money(g.get('amount')) for g in global_grants if str(g.get('stage')).lower() == 'won')
     
     def _payment_in_region(payment):
         if region == "Global":
@@ -2095,8 +2100,10 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             return True
         return False
 
-    region_payments = [p for p in payments if _payment_in_region(p)]
-    total_payments = sum(_coerce_money(p.get('amount')) for p in region_payments)
+    global_payments = [p for p in payments if _payment_in_region(p)]
+    if region != "Global":
+        global_payments = list(payments or [])
+    total_payments = sum(_coerce_money(p.get('amount')) for p in global_payments)
     
     total_funds = funds_raised_grants + total_payments
 
@@ -2414,13 +2421,13 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "region_events": len(region_events),
             "walk_events": walks_delivered,
             "participants": participants,
-            "region_grants": len(region_grants),
+            "region_grants": len(global_grants),
             "bids_submitted": bids_submitted,
             "delivery_events_tagged": delivery_event_count
         },
         "_raw_income": {
-            "payments": region_payments,
-            "grants": region_grants
+            "payments": global_payments,
+            "grants": global_grants
         },
         "_raw_kpi": {
             "region_people": region_people,
@@ -2430,8 +2437,8 @@ def compute_kpis(region, people, organisations, events, payments, grants):
             "corporate_orgs": corporate_orgs,
             "region_events": region_events,
             "delivery_events": delivery_events,
-            "region_grants": region_grants,
-            "region_payments": region_payments,
+            "region_grants": global_grants,
+            "region_payments": global_payments,
             "event_attendee_records": event_attendee_records,
         }
     }
@@ -4424,9 +4431,21 @@ def main_dashboard():
     
 
     # Tabs
-    tab_gov, tab_part, tab_del, tab_inc, tab_com, tab_case = st.tabs([
-        "Governance", "Partnerships", "Delivery", "Income", "Comms", "Case Studies"
-    ])
+    show_global_only_kpis = data.get("region") == "Global"
+    tab_labels = ["Governance", "Partnerships", "Delivery"]
+    if show_global_only_kpis:
+        tab_labels.extend(["Income", "Comms"])
+    tab_labels.append("Case Studies")
+    tabs = st.tabs(tab_labels)
+    tab_gov = tabs[0]
+    tab_part = tabs[1]
+    tab_del = tabs[2]
+    tab_case = tabs[-1]
+    tab_inc = tabs[3] if show_global_only_kpis else None
+    tab_com = tabs[4] if show_global_only_kpis else None
+
+    if not show_global_only_kpis:
+        st.info("Income & Funding and Communications & Profile are now tracked as global-only KPIs and are shown only when the region filter is set to Global.")
 
     # --- A. Governance ---
     with tab_gov:
@@ -4664,182 +4683,183 @@ def main_dashboard():
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- D. Income ---
-    with tab_inc:
-        st.header("Income & Funding")
-        c1, c2 = st.columns(2)
-        with c1:
-            with st.popover(
-                f"Total Funds Raised\n£{data['income']['total_funds_raised']:,.2f}",
-                use_container_width=True,
-            ):
-                if _details_enabled("lazy_inc_total_funds"):
-                    payment_rows = []
-                    for p in raw_kpi.get("region_payments") or []:
-                        payment_rows.append({
-                            "Source": "Payments",
-                            "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
-                            "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
-                            "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
-                            "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
-                        })
-                    grant_rows = []
-                    for g in raw_kpi.get("region_grants") or []:
-                        grant_rows.append({
-                            "Source": "Grants",
-                            "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
-                            "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
-                            "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
-                            "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
-                        })
-                    funds_df = pd.DataFrame(payment_rows + grant_rows)
-                    if funds_df.empty:
-                        st.caption("No payment or grant rows found for this filtered period.")
-                    else:
-                        _show_df_limited(funds_df.sort_values("When", ascending=False), key="tbl_inc_total_funds")
-                    _render_deep_drilldown(
-                        payment_rows + grant_rows,
-                        lambda r: f"{r.get('Source', '')} - {r.get('From', '')}",
-                        key="dd_inc_total_funds",
-                        empty_msg="No payment or grant source rows found for deeper drill-down.",
-                    )
-            with st.popover(
-                f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
-                use_container_width=True,
-            ):
-                st.caption("No raw source field is currently mapped for this metric.")
-                st.caption("No deeper drill-down source rows are mapped for this metric yet.")
-        with c2:
-            with st.popover(
-                f"Bids Submitted\n{data['income']['bids_submitted']}",
-                use_container_width=True,
-            ):
-                if _details_enabled("lazy_inc_bids"):
-                    grant_rows = []
-                    for g in raw_kpi.get("region_grants") or []:
-                        grant_rows.append({
-                            "Source": "Grants",
-                            "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
-                            "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
-                            "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
-                            "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
-                        })
-                    bids_rows = [r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])]
-                    bids_df = pd.DataFrame(bids_rows)
-                    if bids_df.empty:
-                        st.caption("No bid rows found for this filtered period.")
-                    else:
-                        _show_df_limited(bids_df, key="tbl_inc_bids")
-                    _render_deep_drilldown(
-                        bids_rows,
-                        lambda r: f"{r.get('From', '')} ({r.get('Status', '')})",
-                        key="dd_inc_bids",
-                        empty_msg="No bid source rows found for deeper drill-down.",
-                    )
-            with st.popover(
-                f"Corporate Partners\n{data['income']['corporate_partners']}",
-                use_container_width=True,
-            ):
-                if _details_enabled("lazy_inc_corp"):
-                    corp_rows = raw_kpi.get("corporate_orgs") or []
-                    corp_df = _rows_to_df(
-                        corp_rows,
-                        {
-                            "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                            "Type": lambda r: str(r.get("type") or ""),
-                            "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
-                            "Created": lambda r: r.get("created_at"),
-                        },
-                    )
-                    if corp_df.empty:
-                        st.caption("No corporate partner rows found for this filtered period.")
-                    else:
-                        _show_df_limited(corp_df, key="tbl_inc_corp")
-                    _render_deep_drilldown(
-                        corp_rows,
-                        lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
-                        key="dd_inc_corp",
-                        empty_msg="No corporate partner source rows found for deeper drill-down.",
-                    )
-        st.caption("Click a metric above to open its drill-down popup.")
+    if show_global_only_kpis:
+        with tab_inc:
+            st.header("Income & Funding")
+            c1, c2 = st.columns(2)
+            with c1:
+                with st.popover(
+                    f"Total Funds Raised\n£{data['income']['total_funds_raised']:,.2f}",
+                    use_container_width=True,
+                ):
+                    if _details_enabled("lazy_inc_total_funds"):
+                        payment_rows = []
+                        for p in raw_kpi.get("region_payments") or []:
+                            payment_rows.append({
+                                "Source": "Payments",
+                                "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
+                                "From": _get_row_value(p, "description", "name", "reference") or p.get("id"),
+                                "Amount": _coerce_money(_get_row_value(p, "amount", "value", "total")),
+                                "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
+                            })
+                        grant_rows = []
+                        for g in raw_kpi.get("region_grants") or []:
+                            grant_rows.append({
+                                "Source": "Grants",
+                                "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                                "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                                "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                                "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                            })
+                        funds_df = pd.DataFrame(payment_rows + grant_rows)
+                        if funds_df.empty:
+                            st.caption("No payment or grant rows found for this filtered period.")
+                        else:
+                            _show_df_limited(funds_df.sort_values("When", ascending=False), key="tbl_inc_total_funds")
+                        _render_deep_drilldown(
+                            payment_rows + grant_rows,
+                            lambda r: f"{r.get('Source', '')} - {r.get('From', '')}",
+                            key="dd_inc_total_funds",
+                            empty_msg="No payment or grant source rows found for deeper drill-down.",
+                        )
+                with st.popover(
+                    f"In-Kind Value\n£{data['income']['in_kind_value']:,}",
+                    use_container_width=True,
+                ):
+                    st.caption("No raw source field is currently mapped for this metric.")
+                    st.caption("No deeper drill-down source rows are mapped for this metric yet.")
+            with c2:
+                with st.popover(
+                    f"Bids Submitted\n{data['income']['bids_submitted']}",
+                    use_container_width=True,
+                ):
+                    if _details_enabled("lazy_inc_bids"):
+                        grant_rows = []
+                        for g in raw_kpi.get("region_grants") or []:
+                            grant_rows.append({
+                                "Source": "Grants",
+                                "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
+                                "From": _get_row_value(g, "name", "title", "description") or g.get("id"),
+                                "Amount": _coerce_money(_get_row_value(g, "amount", "amount_granted", "value")),
+                                "Status": _get_row_value(g, "stage", "status", "Stage", "Status") or "",
+                            })
+                        bids_rows = [r for r in grant_rows if any(x in str(r.get("Status", "")).lower() for x in ["submitted", "review", "pending"])]
+                        bids_df = pd.DataFrame(bids_rows)
+                        if bids_df.empty:
+                            st.caption("No bid rows found for this filtered period.")
+                        else:
+                            _show_df_limited(bids_df, key="tbl_inc_bids")
+                        _render_deep_drilldown(
+                            bids_rows,
+                            lambda r: f"{r.get('From', '')} ({r.get('Status', '')})",
+                            key="dd_inc_bids",
+                            empty_msg="No bid source rows found for deeper drill-down.",
+                        )
+                with st.popover(
+                    f"Corporate Partners\n{data['income']['corporate_partners']}",
+                    use_container_width=True,
+                ):
+                    if _details_enabled("lazy_inc_corp"):
+                        corp_rows = raw_kpi.get("corporate_orgs") or []
+                        corp_df = _rows_to_df(
+                            corp_rows,
+                            {
+                                "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                                "Type": lambda r: str(r.get("type") or ""),
+                                "Region": lambda r: ", ".join(_to_list(r.get("c_region"))),
+                                "Created": lambda r: r.get("created_at"),
+                            },
+                        )
+                        if corp_df.empty:
+                            st.caption("No corporate partner rows found for this filtered period.")
+                        else:
+                            _show_df_limited(corp_df, key="tbl_inc_corp")
+                        _render_deep_drilldown(
+                            corp_rows,
+                            lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
+                            key="dd_inc_corp",
+                            empty_msg="No corporate partner source rows found for deeper drill-down.",
+                        )
+            st.caption("Click a metric above to open its drill-down popup.")
 
-        st.subheader("Income Over Time")
-        raw_income = (data.get("_raw_income") or {})
-        payments = raw_income.get("payments") or []
-        grants = raw_income.get("grants") or []
+            st.subheader("Income Over Time")
+            raw_income = (data.get("_raw_income") or {})
+            payments = raw_income.get("payments") or []
+            grants = raw_income.get("grants") or []
 
-        def _to_float(val):
-            return _coerce_money(val)
+            def _to_float(val):
+                return _coerce_money(val)
 
-        rows = []
-        for p in payments:
-            rows.append({
-                "date": p.get("payment_date"),
-                "amount": _to_float(p.get("amount")),
-                "source": "Payments"
-            })
-        for g in grants:
-            rows.append({
-                "date": g.get("close_date"),
-                "amount": _to_float(g.get("amount")),
-                "source": "Grants"
-            })
+            rows = []
+            for p in payments:
+                rows.append({
+                    "date": p.get("payment_date"),
+                    "amount": _to_float(p.get("amount")),
+                    "source": "Payments"
+                })
+            for g in grants:
+                rows.append({
+                    "date": g.get("close_date"),
+                    "amount": _to_float(g.get("amount")),
+                    "source": "Grants"
+                })
 
-        if rows:
-            df_income = pd.DataFrame(rows)
-            df_income["date"] = pd.to_datetime(df_income["date"], errors="coerce")
-            df_income = df_income.dropna(subset=["date"])
+            if rows:
+                df_income = pd.DataFrame(rows)
+                df_income["date"] = pd.to_datetime(df_income["date"], errors="coerce")
+                df_income = df_income.dropna(subset=["date"])
 
-            if not df_income.empty:
-                # Choose grouping based on timeframe selection
-                if timeframe == "Week":
-                    freq = "D"
-                    title = "Daily Income (Week)"
-                elif timeframe == "Month":
-                    freq = "D"
-                    title = "Daily Income (Month)"
-                elif timeframe == "Quarter":
-                    freq = "W-MON"
-                    title = "Weekly Income (Quarter)"
-                elif timeframe == "Year":
-                    freq = "M"
-                    title = "Monthly Income (Year)"
-                elif timeframe == "Custom Range" and start_date and end_date:
-                    days = (end_date.date() - start_date.date()).days
-                    if days <= 31:
+                if not df_income.empty:
+                    # Choose grouping based on timeframe selection
+                    if timeframe == "Week":
                         freq = "D"
-                        title = "Daily Income (Custom Range)"
-                    else:
+                        title = "Daily Income (Week)"
+                    elif timeframe == "Month":
+                        freq = "D"
+                        title = "Daily Income (Month)"
+                    elif timeframe == "Quarter":
                         freq = "W-MON"
-                        title = "Weekly Income (Custom Range)"
+                        title = "Weekly Income (Quarter)"
+                    elif timeframe == "Year":
+                        freq = "M"
+                        title = "Monthly Income (Year)"
+                    elif timeframe == "Custom Range" and start_date and end_date:
+                        days = (end_date.date() - start_date.date()).days
+                        if days <= 31:
+                            freq = "D"
+                            title = "Daily Income (Custom Range)"
+                        else:
+                            freq = "W-MON"
+                            title = "Weekly Income (Custom Range)"
+                    else:
+                        freq = "M"
+                        title = "Monthly Income (All Time)"
+
+                    df_income = df_income.groupby([pd.Grouper(key="date", freq=freq), "source"], as_index=False)["amount"].sum()
+                    st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
+                    st.dataframe(df_income.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
                 else:
-                    freq = "M"
-                    title = "Monthly Income (All Time)"
-
-                df_income = df_income.groupby([pd.Grouper(key="date", freq=freq), "source"], as_index=False)["amount"].sum()
-                st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-                st.dataframe(df_income.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+                    st.info("No dated income records found for this period.")
             else:
-                st.info("No dated income records found for this period.")
-        else:
-            st.info("No income records found for this period.")
+                st.info("No income records found for this period.")
 
-    # --- E. Comms ---
-    with tab_com:
-        st.header("Communications & Profile")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            with st.popover(f"Press Releases\n{data['comms']['press_releases']}", use_container_width=True):
-                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
-        with c2:
-            with st.popover(f"Media Coverage\n{data['comms']['media_coverage']}", use_container_width=True):
-                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
-        with c3:
-            with st.popover(f"Newsletters Sent\n{data['comms']['newsletters_sent']}", use_container_width=True):
-                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
-        with c4:
-            with st.popover(f"Open Rate\n{data['comms']['open_rate']}%", use_container_width=True):
-                st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
-        st.caption("Click a metric above to open its drill-down popup.")
+        # --- E. Comms ---
+        with tab_com:
+            st.header("Communications & Profile")
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                with st.popover(f"Press Releases\n{data['comms']['press_releases']}", use_container_width=True):
+                    st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+            with c2:
+                with st.popover(f"Media Coverage\n{data['comms']['media_coverage']}", use_container_width=True):
+                    st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+            with c3:
+                with st.popover(f"Newsletters Sent\n{data['comms']['newsletters_sent']}", use_container_width=True):
+                    st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+            with c4:
+                with st.popover(f"Open Rate\n{data['comms']['open_rate']}%", use_container_width=True):
+                    st.caption("Comms metrics are currently placeholders and not yet connected to raw source rows.")
+            st.caption("Click a metric above to open its drill-down popup.")
 
     # --- CASE STUDIES ---
     with tab_case:
