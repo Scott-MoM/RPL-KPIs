@@ -547,6 +547,39 @@ def _coerce_int(value):
     except Exception:
         return 0
 
+def _format_dataframe_cell(value):
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    if isinstance(value, (list, tuple, set)):
+        try:
+            return json.dumps(list(value), ensure_ascii=True)
+        except Exception:
+            return str(list(value))
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=True, sort_keys=True)
+        except Exception:
+            return str(value)
+    return str(value) if isinstance(value, bytes) else value
+
+def _make_arrow_compatible_df(df):
+    if df is None:
+        return df
+    safe_df = df.copy()
+    for col in safe_df.columns:
+        if not pd.api.types.is_object_dtype(safe_df[col]):
+            continue
+        safe_df[col] = safe_df[col].map(_format_dataframe_cell)
+    return safe_df
+
+def _safe_dataframe(df, **kwargs):
+    st.dataframe(_make_arrow_compatible_df(df), **kwargs)
+
 def render_plot_with_export(fig, export_name, key_prefix):
     plot_config = {
         "displayModeBar": True,
@@ -3190,9 +3223,9 @@ def _show_df_limited(df, key, default_limit=150):
     total_rows = len(df)
     show_all = st.checkbox(f"Show all rows ({total_rows})", key=f"{key}_show_all", value=False)
     if show_all or total_rows <= default_limit:
-        st.dataframe(df, width="stretch", hide_index=True)
+        _safe_dataframe(df, width="stretch", hide_index=True)
     else:
-        st.dataframe(df.head(default_limit), width="stretch", hide_index=True)
+        _safe_dataframe(df.head(default_limit), width="stretch", hide_index=True)
         st.caption(f"Showing first {default_limit} of {total_rows} rows. Enable 'Show all rows' to view everything.")
 
 def _can_view_event_attendee_details():
@@ -3639,7 +3672,7 @@ def funder_dashboard():
         income_df["date"] = pd.to_datetime(income_df["date"], errors="coerce")
         income_df = income_df.dropna(subset=["date"])
         if not income_df.empty:
-            monthly = income_df.groupby([pd.Grouper(key="date", freq="M"), "source"], as_index=False)["amount"].sum()
+            monthly = income_df.groupby([pd.Grouper(key="date", freq="ME"), "source"], as_index=False)["amount"].sum()
             fig_income = px.line(monthly, x="date", y="amount", color="source", markers=True)
             render_plot_with_export(fig_income, "funder-income-trend", "funder_income_trend")
         else:
@@ -3844,7 +3877,7 @@ def admin_dashboard():
     if users_data:
         df_users = pd.DataFrame(users_data)
         with st.expander("Existing Users & Actions", expanded=False):
-            st.dataframe(df_users, width="stretch")
+            _safe_dataframe(df_users, width="stretch")
             
             if not df_users.empty:
                 user_emails = df_users['email'].tolist()
@@ -4183,7 +4216,7 @@ def admin_dashboard():
                             keep="first"
                         )
 
-                    st.dataframe(
+                    _safe_dataframe(
                         df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
                         width="stretch",
                         hide_index=True
@@ -4374,7 +4407,7 @@ def main_dashboard():
             scalar_df = pd.DataFrame(
                 [{"Field": k, "Value": ("" if v is None else v)} for k, v in scalar_rows]
             )
-            st.dataframe(scalar_df, width="stretch", hide_index=True)
+            _safe_dataframe(scalar_df, width="stretch", hide_index=True)
 
         for k, v in list_rows:
             label = _pretty_field_name(k)
@@ -4400,7 +4433,7 @@ def main_dashboard():
                 nested_df = pd.DataFrame(
                     [{"Field": _pretty_field_name(kk), "Value": ("" if vv is None else vv)} for kk, vv in nested_scalars.items()]
                 )
-                st.dataframe(nested_df, width="stretch", hide_index=True)
+                _safe_dataframe(nested_df, width="stretch", hide_index=True)
             else:
                 st.caption("Nested structured data available.")
 
@@ -4675,7 +4708,7 @@ def main_dashboard():
         df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
         st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-        st.dataframe(df_demo, width="stretch", hide_index=True)
+        _safe_dataframe(df_demo, width="stretch", hide_index=True)
         if demo_source == "people_type_tags":
             st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
         elif demo_source == "event_type_split":
@@ -4823,7 +4856,7 @@ def main_dashboard():
                         freq = "W-MON"
                         title = "Weekly Income (Quarter)"
                     elif timeframe == "Year":
-                        freq = "M"
+                        freq = "ME"
                         title = "Monthly Income (Year)"
                     elif timeframe == "Custom Range" and start_date and end_date:
                         days = (end_date.date() - start_date.date()).days
@@ -4834,12 +4867,12 @@ def main_dashboard():
                             freq = "W-MON"
                             title = "Weekly Income (Custom Range)"
                     else:
-                        freq = "M"
+                        freq = "ME"
                         title = "Monthly Income (All Time)"
 
                     df_income = df_income.groupby([pd.Grouper(key="date", freq=freq), "source"], as_index=False)["amount"].sum()
                     st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-                    st.dataframe(df_income.sort_values("date", ascending=False), width="stretch", hide_index=True)
+                    _safe_dataframe(df_income.sort_values("date", ascending=False), width="stretch", hide_index=True)
                 else:
                     st.info("No dated income records found for this period.")
             else:
@@ -5340,7 +5373,7 @@ def custom_reports_dashboard():
         sort_desc = st.checkbox("Sort descending", value=True, key="reports_table_sort_desc")
         row_limit = st.number_input("Max rows", min_value=10, max_value=5000, value=500, step=10, key="reports_table_row_limit")
         table_df = table_df.sort_values(sort_col, ascending=not sort_desc, na_position="last").head(int(row_limit))
-        st.dataframe(table_df, width="stretch", hide_index=True)
+        _safe_dataframe(table_df, width="stretch", hide_index=True)
         return
 
     agg_col = st.selectbox("Group By", dims, key="reports_group_col")
@@ -5379,7 +5412,7 @@ def custom_reports_dashboard():
             st.warning("No date values available for line output in this dataset.")
             return
         freq = st.selectbox("Line Interval", ["Daily", "Weekly", "Monthly"], key="reports_line_freq")
-        freq_code = {"Daily": "D", "Weekly": "W-MON", "Monthly": "M"}[freq]
+        freq_code = {"Daily": "D", "Weekly": "W-MON", "Monthly": "ME"}[freq]
         line_df = line_df.dropna(subset=["date"])
         split_options = ["None"] + dims
         line_split = st.selectbox("Line split", split_options, key="reports_line_split")
