@@ -797,6 +797,9 @@ def _extract_postcode_from_value(value):
             return f"{postcode[:-3]} {postcode[-3:]}" if len(postcode) > 3 else postcode
     return None
 
+def _normalize_person_lookup(value):
+    return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
+
 def _extract_coords_from_record(record):
     if not isinstance(record, dict):
         return None, None
@@ -921,6 +924,7 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
         payload = row.get("payload") or {}
         person_id = payload.get("id")
         person_name = str(_get_row_value(payload, "name", "full_name", "Display Name", "email") or person_id or "").strip()
+        person_email = str(_get_row_value(payload, "email", "Email") or "").strip()
         person_loc = _resolve_record_location(payload)
         person_entry = {
             "person_id": str(person_id or ""),
@@ -931,13 +935,16 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
         }
         if person_id:
             people_by_id[_entity_ref_key(person_id)] = person_entry
-        if person_name:
-            people_by_name[person_name.strip().lower()] = person_entry
+        for candidate in [person_name, person_email]:
+            key = _normalize_person_lookup(candidate)
+            if key:
+                people_by_name[key] = person_entry
         for event_id in _extract_linked_event_ids_from_person(payload):
             linked_people_by_event.setdefault(_entity_ref_key(event_id), []).append(person_entry)
 
     analysis_rows = []
     people_name_lookup = {k: v.get("participant") for k, v in people_by_id.items()}
+    live_attendee_cache = {}
     for row in event_rows:
         payload = row.get("payload") or {}
         event_region = (
@@ -965,7 +972,7 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
                     participants.append(person)
 
         for name in participant_names:
-            person = people_by_name.get(str(name).strip().lower())
+            person = people_by_name.get(_normalize_person_lookup(name))
             if person:
                 dedupe_key = person.get("person_id") or person.get("participant")
                 if dedupe_key not in seen_participants:
@@ -977,6 +984,27 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
             if dedupe_key not in seen_participants:
                 seen_participants.add(dedupe_key)
                 participants.append(person)
+
+        event_id = payload.get("id")
+        if not participants and event_id:
+            cache_key = str(event_id)
+            if cache_key not in live_attendee_cache:
+                live_attendee_cache[cache_key] = fetch_live_event_attendees(cache_key)
+            live_attendees = live_attendee_cache.get(cache_key) or {"names": [], "ids": []}
+            for pid in live_attendees.get("ids") or []:
+                person = people_by_id.get(_entity_ref_key(pid))
+                if person:
+                    dedupe_key = person.get("person_id") or person.get("participant")
+                    if dedupe_key not in seen_participants:
+                        seen_participants.add(dedupe_key)
+                        participants.append(person)
+            for name in live_attendees.get("names") or []:
+                person = people_by_name.get(_normalize_person_lookup(name))
+                if person:
+                    dedupe_key = person.get("person_id") or person.get("participant")
+                    if dedupe_key not in seen_participants:
+                        seen_participants.add(dedupe_key)
+                        participants.append(person)
 
         for person in participants:
             p_lat = person.get("participant_lat")
@@ -5687,13 +5715,17 @@ def custom_reports_dashboard():
         )
         min_value = float(df["metric_value"].min()) if not df.empty else 0.0
         max_value = float(df["metric_value"].max()) if not df.empty else 0.0
-        value_range = st.slider(
-            "Metric value range",
-            min_value=min_value,
-            max_value=max_value if max_value >= min_value else min_value,
-            value=(min_value, max_value if max_value >= min_value else min_value),
-            key="reports_value_range"
-        )
+        if max_value <= min_value:
+            value_range = (min_value, max_value)
+            st.caption(f"Metric value range fixed at {min_value:,.2f} because all rows share the same value.")
+        else:
+            value_range = st.slider(
+                "Metric value range",
+                min_value=min_value,
+                max_value=max_value,
+                value=(min_value, max_value),
+                key="reports_value_range"
+            )
         require_date = st.checkbox("Only include rows with valid date", value=False, key="reports_require_date")
 
     if dataset_filter:
