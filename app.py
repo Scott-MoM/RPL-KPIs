@@ -1935,7 +1935,6 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             "start_date": entity.get("start_date"),
             "region": (entity.get("c_region") or [None])[0],
             "updated_at": now_iso,
-            "attendee_records": attendee_records_for_event,
         }
 
     payment_seen = {}
