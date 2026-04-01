@@ -2,6 +2,8 @@
 import pandas as pd
 import json
 import os
+import re
+import math
 import requests
 import time
 import threading
@@ -628,6 +630,8 @@ def _entity_ref_key(value):
         return digits
     return "".join(ch for ch in s if ch.isalnum())
 
+POSTCODE_RE = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b", re.IGNORECASE)
+
 def _get_row_value(row, *keys):
     if not row or not keys:
         return None
@@ -650,6 +654,355 @@ def _get_row_value(row, *keys):
         if nk in normalized and normalized[nk] not in [None, ""]:
             return normalized[nk]
     return None
+
+def _extract_participant_refs(event_row, people_name_by_id=None):
+    people_name_by_id = people_name_by_id or {}
+    participant_keys = (
+        "participant_list",
+        "participants_list",
+        "participants",
+        "attendees",
+        "attendee_list",
+        "attendees_list",
+        "people",
+        "participant_names",
+        "attendee_names",
+        "contacts",
+        "relationships",
+    )
+    found_names = []
+    found_ids = []
+    seen_names = set()
+    seen_ids = set()
+    context_tokens = ("participant", "attendee", "people", "contact", "person", "member")
+    id_keys = ("id", "person_id", "contact_id", "participant_id", "attendee_id")
+
+    def _add_name(value):
+        candidate = str(value).strip()
+        if not candidate:
+            return
+        key = candidate.lower()
+        if key in seen_names:
+            return
+        seen_names.add(key)
+        found_names.append(candidate)
+
+    def _add_id(value):
+        candidate = str(value).strip()
+        if not candidate or candidate in seen_ids:
+            return
+        seen_ids.add(candidate)
+        found_ids.append(candidate)
+
+    def _looks_like_context(path):
+        path_l = str(path).lower()
+        return any(t in path_l for t in context_tokens)
+
+    def _walk(value, path=""):
+        if value is None:
+            return
+        if isinstance(value, dict):
+            local_name = value.get("name") or value.get("full_name") or value.get("display_name")
+            if local_name:
+                _add_name(local_name)
+            if value.get("email"):
+                _add_name(value.get("email"))
+            for id_key in id_keys:
+                if value.get(id_key) is not None and _looks_like_context(path):
+                    _add_id(value.get(id_key))
+            for k, v in value.items():
+                next_path = f"{path}.{k}" if path else str(k)
+                _walk(v, next_path)
+            return
+        if isinstance(value, list):
+            for idx, item in enumerate(value):
+                next_path = f"{path}[{idx}]"
+                _walk(item, next_path)
+            return
+        if isinstance(value, str) and _looks_like_context(path):
+            raw = [x.strip() for x in value.replace("\n", ",").replace(";", ",").split(",")]
+            for token in raw:
+                if token:
+                    _add_name(token)
+
+    for key in participant_keys:
+        val = event_row.get(key)
+        if val is not None:
+            _walk(val, key)
+
+    for pid in found_ids:
+        mapped_name = people_name_by_id.get(_entity_ref_key(pid))
+        if mapped_name:
+            _add_name(mapped_name)
+    return found_names, found_ids
+
+def _extract_linked_event_ids_from_person(person_row):
+    linked_ids = set()
+    context_tokens = ("event", "attend", "session", "activity", "retreat", "walk", "booking")
+    id_keys = ("id", "event_id", "activity_id", "session_id")
+
+    def _in_context(path):
+        p = str(path).lower()
+        return any(t in p for t in context_tokens)
+
+    def _walk(value, path=""):
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for k, v in value.items():
+                next_path = f"{path}.{k}" if path else str(k)
+                if k in id_keys and _in_context(path) and v is not None and str(v).strip():
+                    linked_ids.add(str(v).strip())
+                _walk(v, next_path)
+            return
+        if isinstance(value, list):
+            for idx, item in enumerate(value):
+                _walk(item, f"{path}[{idx}]")
+            return
+        if isinstance(value, str) and _in_context(path):
+            for token in re.split(r"[,;\n]", value):
+                token = token.strip()
+                if token:
+                    linked_ids.add(token)
+
+    _walk(person_row)
+    return linked_ids
+
+def _walk_nested_values(value):
+    if value is None:
+        return
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from _walk_nested_values(v)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _walk_nested_values(item)
+        return
+    yield value
+
+def _extract_postcode_from_value(value):
+    for item in _walk_nested_values(value):
+        if isinstance(item, bytes):
+            try:
+                item = item.decode("utf-8")
+            except Exception:
+                item = str(item)
+        text = str(item).strip()
+        if not text:
+            continue
+        match = POSTCODE_RE.search(text.upper())
+        if match:
+            postcode = re.sub(r"\s+", "", match.group(1).upper())
+            return f"{postcode[:-3]} {postcode[-3:]}" if len(postcode) > 3 else postcode
+    return None
+
+def _extract_coords_from_record(record):
+    if not isinstance(record, dict):
+        return None, None
+
+    def _to_float_or_none(value):
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _walk(value):
+        if isinstance(value, dict):
+            lat = None
+            lon = None
+            for lat_key in ("lat", "latitude", "y"):
+                if lat_key in value:
+                    lat = _to_float_or_none(value.get(lat_key))
+                    if lat is not None:
+                        break
+            for lon_key in ("lon", "lng", "long", "longitude", "x"):
+                if lon_key in value:
+                    lon = _to_float_or_none(value.get(lon_key))
+                    if lon is not None:
+                        break
+            if lat is not None and lon is not None:
+                return lat, lon
+            for nested in value.values():
+                found = _walk(nested)
+                if found != (None, None):
+                    return found
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                found = _walk(item)
+                if found != (None, None):
+                    return found
+        return (None, None)
+
+    return _walk(record)
+
+def _extract_location_label(record):
+    if not isinstance(record, dict):
+        return ""
+    return str(
+        _get_row_value(
+            record,
+            "location",
+            "venue",
+            "site",
+            "address",
+            "name",
+            "title",
+            "Display Name",
+        ) or ""
+    ).strip()
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _lookup_postcode_coordinates(postcode):
+    normalized = _extract_postcode_from_value(postcode)
+    if not normalized:
+        return None
+    try:
+        encoded = normalized.replace(" ", "%20")
+        resp = requests.get(f"https://api.postcodes.io/postcodes/{encoded}", timeout=10)
+        resp.raise_for_status()
+        payload = resp.json() or {}
+        result = payload.get("result") or {}
+        lat = result.get("latitude")
+        lon = result.get("longitude")
+        if lat is None or lon is None:
+            return None
+        return {"postcode": normalized, "lat": float(lat), "lon": float(lon)}
+    except Exception:
+        return None
+
+def _resolve_record_location(record):
+    lat, lon = _extract_coords_from_record(record)
+    postcode = _extract_postcode_from_value(record)
+    if lat is not None and lon is not None:
+        return {"postcode": postcode or "", "lat": lat, "lon": lon}
+    if postcode:
+        looked_up = _lookup_postcode_coordinates(postcode)
+        if looked_up:
+            return looked_up
+    return {"postcode": postcode or "", "lat": None, "lon": None}
+
+def _haversine_miles(lat1, lon1, lat2, lon2):
+    radius_miles = 3958.7613
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return 2 * radius_miles * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+@st.cache_data(show_spinner=False, ttl=900)
+def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None):
+    batch_size = 1000
+
+    def _fetch_rows(table, select_cols, date_col=None):
+        offset = 0
+        rows = []
+        while True:
+            q = DB_CLIENT.table(table).select(select_cols).range(offset, offset + batch_size - 1)
+            if date_col and start_date:
+                q = q.gte(date_col, start_date.isoformat())
+            if date_col and end_date:
+                q = q.lte(date_col, end_date.isoformat())
+            chunk = q.execute().data or []
+            rows.extend(chunk)
+            if len(chunk) < batch_size:
+                break
+            offset += batch_size
+        return rows
+
+    people_rows = _fetch_rows("beacon_people", "payload")
+    event_rows = _fetch_rows("beacon_events", "payload, start_date, region", "start_date")
+
+    people_by_id = {}
+    people_by_name = {}
+    linked_people_by_event = {}
+    for row in people_rows:
+        payload = row.get("payload") or {}
+        person_id = payload.get("id")
+        person_name = str(_get_row_value(payload, "name", "full_name", "Display Name", "email") or person_id or "").strip()
+        person_loc = _resolve_record_location(payload)
+        person_entry = {
+            "person_id": str(person_id or ""),
+            "participant": person_name or str(person_id or "Participant"),
+            "participant_postcode": person_loc.get("postcode") or "",
+            "participant_lat": person_loc.get("lat"),
+            "participant_lon": person_loc.get("lon"),
+        }
+        if person_id:
+            people_by_id[_entity_ref_key(person_id)] = person_entry
+        if person_name:
+            people_by_name[person_name.strip().lower()] = person_entry
+        for event_id in _extract_linked_event_ids_from_person(payload):
+            linked_people_by_event.setdefault(_entity_ref_key(event_id), []).append(person_entry)
+
+    analysis_rows = []
+    people_name_lookup = {k: v.get("participant") for k, v in people_by_id.items()}
+    for row in event_rows:
+        payload = row.get("payload") or {}
+        event_region = (
+            (_extract_region_tags(payload) or [None])[0]
+            or row.get("region")
+            or payload.get("region")
+            or "Other"
+        )
+        if region != "Global" and region and region.lower() not in str(event_region).lower():
+            continue
+        event_type = str(_get_row_value(payload, "type", "event_type", "Activity type", "Category") or "Event")
+        event_name = str(_get_row_value(payload, "name", "title", "Event name", "Description") or payload.get("id") or "Event")
+        event_date = pd.to_datetime(row.get("start_date") or payload.get("start_date") or payload.get("date"), utc=True, errors="coerce")
+        event_loc = _resolve_record_location(payload)
+        participant_names, participant_ids = _extract_participant_refs(payload, people_name_lookup)
+        participants = []
+        seen_participants = set()
+
+        for pid in participant_ids:
+            person = people_by_id.get(_entity_ref_key(pid))
+            if person:
+                dedupe_key = person.get("person_id") or person.get("participant")
+                if dedupe_key not in seen_participants:
+                    seen_participants.add(dedupe_key)
+                    participants.append(person)
+
+        for name in participant_names:
+            person = people_by_name.get(str(name).strip().lower())
+            if person:
+                dedupe_key = person.get("person_id") or person.get("participant")
+                if dedupe_key not in seen_participants:
+                    seen_participants.add(dedupe_key)
+                    participants.append(person)
+
+        for person in linked_people_by_event.get(_entity_ref_key(payload.get("id")), []):
+            dedupe_key = person.get("person_id") or person.get("participant")
+            if dedupe_key not in seen_participants:
+                seen_participants.add(dedupe_key)
+                participants.append(person)
+
+        for person in participants:
+            p_lat = person.get("participant_lat")
+            p_lon = person.get("participant_lon")
+            e_lat = event_loc.get("lat")
+            e_lon = event_loc.get("lon")
+            distance_miles = None if None in (p_lat, p_lon, e_lat, e_lon) else _haversine_miles(p_lat, p_lon, e_lat, e_lon)
+            analysis_rows.append({
+                "event_id": str(payload.get("id") or ""),
+                "event_name": event_name,
+                "event_type": event_type,
+                "event_date": event_date,
+                "event_region": event_region,
+                "event_location": _extract_location_label(payload),
+                "event_postcode": event_loc.get("postcode") or "",
+                "participant_id": person.get("person_id") or "",
+                "participant": person.get("participant") or "Participant",
+                "participant_postcode": person.get("participant_postcode") or "",
+                "distance_miles": distance_miles,
+            })
+
+    df = pd.DataFrame(analysis_rows)
+    if df.empty:
+        return df
+    df["distance_miles"] = pd.to_numeric(df["distance_miles"], errors="coerce")
+    return df
 
 FUNDER_SCOPE_PREFIX = "FUNDER::"
 
@@ -5275,7 +5628,7 @@ def custom_reports_dashboard():
     )
     report_type = st.sidebar.selectbox(
         "Output Type",
-        ["Tabular", "Bar", "Line", "Pie", "UK Map", "Comparison Analysis"],
+        ["Tabular", "Bar", "Line", "Pie", "UK Map", "Comparison Analysis", "Distance Analysis"],
         key="reports_output_type"
     )
 
@@ -5363,6 +5716,101 @@ def custom_reports_dashboard():
         file_name=f"{'_'.join([d.lower().replace(' ', '-') for d in selected_datasets])}_custom_report.csv",
         mime="text/csv",
     )
+
+    if report_type == "Distance Analysis":
+        st.subheader("Participant Travel Distance")
+        st.caption("Estimates participant travel from home postcode to the selected walk or retreat location.")
+        distance_df = fetch_distance_analysis_data(region=region_val, start_date=start_date, end_date=end_date)
+        if distance_df.empty:
+            st.warning("No participant-event links were found for the selected filters.")
+            return
+
+        event_type_options = sorted([v for v in distance_df["event_type"].dropna().astype(str).unique().tolist() if v])
+        default_types = [v for v in event_type_options if any(token in v.lower() for token in ("walk", "retreat"))] or event_type_options
+        chosen_event_types = st.multiselect(
+            "Event types",
+            event_type_options,
+            default=default_types,
+            key="reports_distance_event_types",
+        )
+        if chosen_event_types:
+            distance_df = distance_df[distance_df["event_type"].astype(str).isin(chosen_event_types)]
+
+        only_geocoded = st.checkbox("Only include rows with resolved distance", value=True, key="reports_distance_only_geocoded")
+        if only_geocoded:
+            distance_df = distance_df[distance_df["distance_miles"].notna()]
+        if distance_df.empty:
+            st.warning("No distance rows remain after filtering. Participant or event postcode data is likely missing.")
+            return
+
+        distance_df = distance_df.copy()
+        band_labels = ["0-10", "10-25", "25-50", "50-100", "100+"]
+        distance_df["distance_band"] = pd.cut(
+            distance_df["distance_miles"],
+            bins=[0, 10, 25, 50, 100, float("inf")],
+            labels=band_labels,
+            include_lowest=True,
+            right=False,
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Participant journeys", f"{len(distance_df):,}")
+        c2.metric("Avg distance", f"{distance_df['distance_miles'].mean():.1f} miles")
+        c3.metric("Median distance", f"{distance_df['distance_miles'].median():.1f} miles")
+        c4.metric("Max distance", f"{distance_df['distance_miles'].max():.1f} miles")
+
+        band_df = (
+            distance_df.groupby("distance_band", observed=False)
+            .size()
+            .reindex(band_labels, fill_value=0)
+            .rename("journeys")
+            .reset_index()
+        )
+        fig_bands = px.bar(
+            band_df,
+            x="distance_band",
+            y="journeys",
+            title="Journey Distance Distribution",
+            labels={"distance_band": "Distance band (miles)", "journeys": "Participant journeys"},
+        )
+        render_plot_with_export(fig_bands, "participant-distance-bands", "reports_distance_bands")
+
+        event_summary = (
+            distance_df.groupby(["event_name", "event_type", "event_region"], as_index=False)
+            .agg(
+                participant_journeys=("participant", "count"),
+                avg_distance_miles=("distance_miles", "mean"),
+                median_distance_miles=("distance_miles", "median"),
+                max_distance_miles=("distance_miles", "max"),
+            )
+            .sort_values(["avg_distance_miles", "participant_journeys"], ascending=[False, False])
+        )
+        st.markdown("**Events Ranked By Average Travel Distance**")
+        _safe_dataframe(event_summary.head(100), width="stretch", hide_index=True)
+
+        detail_cols = [
+            "event_date",
+            "event_name",
+            "event_type",
+            "event_region",
+            "event_location",
+            "event_postcode",
+            "participant",
+            "participant_postcode",
+            "distance_miles",
+        ]
+        detail_limit = st.number_input("Detail rows", min_value=25, max_value=5000, value=250, step=25, key="reports_distance_detail_limit")
+        detail_df = distance_df[detail_cols].sort_values("distance_miles", ascending=False).head(int(detail_limit))
+        st.markdown("**Participant-Level Journey Detail**")
+        _safe_dataframe(detail_df, width="stretch", hide_index=True)
+        st.download_button(
+            "Download Distance Analysis CSV",
+            data=distance_df.to_csv(index=False).encode("utf-8"),
+            file_name="participant_distance_analysis.csv",
+            mime="text/csv",
+            key="reports_distance_csv",
+        )
+        return
 
     numeric_cols = [c for c in ["record_count", "metric_value"] if c in df.columns]
     candidate_dims = [c for c in ["region", "category", "status", "month", "label"] if c in df.columns]
