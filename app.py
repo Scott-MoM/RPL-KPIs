@@ -1928,7 +1928,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             entity["number_of_attendees"] = direct_count
         else:
             entity["number_of_attendees"] = existing_count
-        attendee_records_for_event = event_attendee_records.get(str(rec_id)) or event_attendee_records.get(_id_key(rec_id)) or []
+        attendee_records_for_event = event_attendee_records.get(str(rec_id)) or event_attendee_records.get(_entity_ref_key(rec_id)) or []
         event_seen[rec_id] = {
             "id": rec_id,
             "payload": entity,
