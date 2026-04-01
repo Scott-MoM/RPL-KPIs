@@ -587,6 +587,9 @@ def _make_arrow_compatible_df(df):
 def _safe_dataframe(df, **kwargs):
     st.dataframe(_make_arrow_compatible_df(df), **kwargs)
 
+def _pretty_field_name(name):
+    return str(name).replace("_", " ").strip().title()
+
 def render_plot_with_export(fig, export_name, key_prefix):
     plot_config = {
         "displayModeBar": True,
