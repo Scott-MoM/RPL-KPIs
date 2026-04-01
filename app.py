@@ -11,7 +11,7 @@ import uuid
 import plotly.express as px
 import plotly.io as pio
 from passlib.hash import pbkdf2_sha256
-from datetime import datetime
+from datetime import datetime, UTC
 from concurrent.futures import ThreadPoolExecutor
 
 # --- SUPABASE SETUP ---
@@ -1221,7 +1221,7 @@ def _upsert_in_batches(
     return total
 
 def import_beacon_uploads(admin_client, uploads):
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     people_rows = []
     people_seen = {}
@@ -1699,7 +1699,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
             raise SyncCancelledError("Manual sync cancelled by user.")
 
     total_started = time.time()
-    now_iso = datetime.utcnow().isoformat() + "Z"
+    now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     beacon_key = _get_secret_or_env("BEACON_API_KEY")
     beacon_base_url = _get_secret_or_env("BEACON_BASE_URL")
     beacon_account_id = _get_secret_or_env("BEACON_ACCOUNT_ID")
