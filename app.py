@@ -1795,7 +1795,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
     for p_id, p_row in people_seen.items():
         p_payload = p_row.get("payload") or {}
         p_name = _get_row_value(p_payload, "name", "full_name", "Display Name", "email") or p_id
-        people_name_by_id[str(p_id)] = str(p_name).strip()
+        people_name_by_id[_entity_ref_key(p_id)] = str(p_name).strip()
 
     org_seen = {}
     for row in datasets["organisations"]:
@@ -1884,13 +1884,13 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
         att["event_id"] = str(event_id)
         name = _attendee_name(att)
         if (not name) and person_id:
-            name = people_name_by_id.get(str(person_id))
+            name = people_name_by_id.get(_entity_ref_key(person_id))
         bucket = attendee_map.setdefault(event_id, {"names": set(), "ids": set()})
         if person_id:
             bucket["ids"].add(str(person_id))
         if name:
             bucket["names"].add(str(name).strip())
-        norm_event_id = _id_key(event_id)
+        norm_event_id = _entity_ref_key(event_id)
         records_bucket = event_attendee_records.setdefault(event_id, [])
         records_bucket.append(att)
         if norm_event_id and norm_event_id != event_id:
