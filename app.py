@@ -3818,17 +3818,6 @@ def ml_dashboard():
         st.subheader("Event Details")
         _show_df_limited(pd.DataFrame(metadata), key="ml_event_metadata")
 
-    attendee_names = selected_event.get("participant_list") or []
-    attendee_ids = selected_event.get("participant_ids") or []
-    if attendee_names:
-        st.subheader("Attendee Names")
-        _show_df_limited(pd.DataFrame({"Name": attendee_names}), key="ml_attendee_names", default_limit=250)
-    if attendee_ids:
-        st.subheader("Attendee IDs")
-        _show_df_limited(pd.DataFrame({"Attendee ID": attendee_ids}), key="ml_attendee_ids", default_limit=250)
-    if not attendee_names and not attendee_ids:
-        st.info("Attendee names/IDs are not yet available in this event source.")
-
     people_rows = raw_kpi.get("region_people") or []
     def _normalize_name(value):
         return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
@@ -3847,6 +3836,8 @@ def ml_dashboard():
     attendee_records = selected_event.get("attendee_records") or []
     attendee_options = []
     seen_attendees = set()
+    attendee_record_by_name = {}
+    attendee_record_by_id = {}
 
     def _add_option(label, name=None, att_id=None, record=None):
         key = (label.strip().lower(), str(att_id or ""), bool(record))
@@ -3879,17 +3870,34 @@ def ml_dashboard():
             display_name = None
         person_id = _person_id_from_record(rec)
         label = display_name or person_id or f"Attendee {len(attendee_options)+1}"
+        if display_name:
+            attendee_record_by_name[_normalize_name(display_name)] = rec
+        if person_id:
+            attendee_record_by_id[str(person_id)] = rec
         _add_option(label, display_name, person_id, record=rec)
 
+    attendee_names = selected_event.get("participant_list") or []
+    attendee_ids = selected_event.get("participant_ids") or []
     for idx, name in enumerate(attendee_names):
         idx_id = attendee_ids[idx] if idx < len(attendee_ids) else None
         _add_option(str(name).strip(), name, idx_id)
 
+    if attendee_options:
+        st.subheader("Participants")
+    elif attendee_names:
+        st.subheader("Attendee Names")
+        _show_df_limited(pd.DataFrame({"Name": attendee_names}), key="ml_attendee_names", default_limit=250)
+    if attendee_ids and not attendee_options:
+        st.subheader("Attendee IDs")
+        _show_df_limited(pd.DataFrame({"Attendee ID": attendee_ids}), key="ml_attendee_ids", default_limit=250)
+    if not attendee_names and not attendee_ids and not attendee_options:
+        st.info("Attendee names/IDs are not yet available in this event source.")
+
     selected_person = None
     selected_record = None
     if attendee_options:
-        selected_idx = st.selectbox(
-            "Select attendee for details",
+        selected_idx = st.radio(
+            "Click a participant to view details",
             list(range(len(attendee_options))),
             format_func=lambda idx: attendee_options[idx]["label"],
             key="ml_attendee_select",
@@ -3899,6 +3907,10 @@ def ml_dashboard():
         selected_record = selected_entry.get("record")
         person_record = None
         person_id = selected_entry.get("id")
+        if not selected_record and person_id and str(person_id) in attendee_record_by_id:
+            selected_record = attendee_record_by_id[str(person_id)]
+        if not selected_record and selected_entry.get("name"):
+            selected_record = attendee_record_by_name.get(_normalize_name(selected_entry["name"]))
         if person_id and str(person_id) in people_by_id:
             person_record = people_by_id[str(person_id)]
         if not person_record and selected_entry.get("name"):
