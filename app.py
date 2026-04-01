@@ -5607,7 +5607,7 @@ def fetch_custom_report_data(dataset_key, start_date=None, end_date=None):
         return df
     df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
     df["metric_value"] = pd.to_numeric(df["metric_value"], errors="coerce").fillna(0.0)
-    df["month"] = df["date"].dt.to_period("M").astype(str)
+    df["month"] = df["date"].dt.tz_localize(None).dt.to_period("M").astype(str)
     return df
 
 def custom_reports_dashboard():
