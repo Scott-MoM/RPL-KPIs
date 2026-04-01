@@ -816,6 +816,20 @@ def _normalize_gender(value):
         return "Unknown / Not provided"
     return "Trans / Non-binary / Gender diverse"
 
+def _extract_linked_id(value):
+    if isinstance(value, list):
+        for item in value:
+            extracted = _extract_linked_id(item)
+            if extracted not in [None, ""]:
+                return extracted
+        return None
+    if isinstance(value, dict):
+        for key in ("id", "record_id", "value"):
+            if value.get(key) not in [None, ""]:
+                return value.get(key)
+        return None
+    return value
+
 def _extract_coords_from_record(record):
     if not isinstance(record, dict):
         return None, None
@@ -1434,8 +1448,7 @@ def fetch_live_event_attendees(event_id):
 
     def _attendee_event_id(att):
         direct = _get_row_value(att, "event_id", "eventId", "event")
-        if isinstance(direct, dict):
-            direct = direct.get("id")
+        direct = _extract_linked_id(direct)
         if direct not in [None, ""]:
             return direct
         rel = att.get("relationships") if isinstance(att, dict) else None
@@ -1499,7 +1512,7 @@ def fetch_live_event_attendees(event_id):
                     att_event_id = _attendee_event_id(att)
                     if _id_key(att_event_id) != target_key:
                         continue
-                    pid = _get_row_value(att, "person_id", "participant_id", "contact_id", "id")
+                    pid = _extract_linked_id(_get_row_value(att, "person_id", "participant_id", "contact_id", "person", "participant", "contact"))
                     if pid is not None:
                         p = str(pid).strip()
                         if p and p not in seen_ids:
@@ -1802,8 +1815,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
 
     def _attendee_event_id(att):
         direct = _get_row_value(att, "event_id", "eventId", "event")
-        if isinstance(direct, dict):
-            direct = direct.get("id")
+        direct = _extract_linked_id(direct)
         if direct not in [None, ""]:
             return str(direct)
         for key in ("event", "activity", "session"):
@@ -1827,8 +1839,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
 
     def _attendee_person_id(att):
         direct = _get_row_value(att, "person_id", "contact_id", "participant_id", "person", "contact", "participant")
-        if isinstance(direct, dict):
-            direct = direct.get("id")
+        direct = _extract_linked_id(direct)
         if direct not in [None, ""]:
             return str(direct)
         rel = att.get("relationships")
@@ -2820,7 +2831,7 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
             if attendee_key in seen_attendees:
                 continue
             seen_attendees.add(attendee_key)
-            label = _normalize_gender(_get_row_value(attendee, "Gender", "gender"))
+            label = _normalize_gender(_get_row_value(attendee, "c_gender", "Gender", "gender"))
             attendee_gender_demographics[label] = attendee_gender_demographics.get(label, 0) + 1
 
     # Delivery demographics from currently available fields.
