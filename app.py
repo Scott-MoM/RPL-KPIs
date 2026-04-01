@@ -3938,15 +3938,33 @@ def ml_dashboard():
                     rows.append({"Field": label, "Value": _format_value(value)})
         return rows
 
+    def _collect_scalar_fields(record):
+        rows = []
+        seen = set()
+        if not isinstance(record, dict):
+            return rows
+        for key, value in record.items():
+            if value in [None, "", [], {}]:
+                continue
+            if isinstance(value, (dict, list, tuple, set)):
+                continue
+            label = _pretty_field_name(key)
+            if label in seen:
+                continue
+            seen.add(label)
+            rows.append({"Field": label, "Value": _format_value(value)})
+        return rows
+
     if selected_person or selected_record:
         sources = [selected_record, selected_person]
-        personal_keywords = ("name", "full_name", "display_name", "email", "phone", "mobile", "telephone", "dob", "date_of_birth", "address", "postcode")
-        medical_keywords = ("medical", "health", "medication", "condition", "allergy")
+        personal_keywords = ("name", "full_name", "display_name", "email", "phone", "mobile", "telephone", "dob", "date_of_birth", "address", "postcode", "gender", "pronoun", "signup", "type")
+        medical_keywords = ("medical", "health", "medication", "condition", "allergy", "fitness", "dietary", "doctor", "balance", "chest_pain", "bone_joint")
         emergency_keywords = ("emergency", "emergency_contact", "next_of_kin", "contact_person", "contact_name", "contact_phone")
 
         personal_rows = _collect_fields(sources, personal_keywords)
         medical_rows = _collect_fields(sources, medical_keywords)
         emergency_rows = _collect_fields(sources, emergency_keywords)
+        general_rows = _collect_scalar_fields(selected_record)
 
         if personal_rows:
             st.subheader("Personal Information")
@@ -3957,7 +3975,10 @@ def ml_dashboard():
         if emergency_rows:
             st.subheader("Emergency Contact Details")
             _show_df_limited(pd.DataFrame(emergency_rows), key="ml_attendee_emergency", default_limit=25)
-        if not any((personal_rows, medical_rows, emergency_rows)):
+        if general_rows:
+            st.subheader("Participant Record")
+            _show_df_limited(pd.DataFrame(general_rows), key="ml_attendee_general", default_limit=50)
+        if not any((personal_rows, medical_rows, emergency_rows, general_rows)):
             st.info("No additional details were found for this attendee.")
 
     def _find_fields(record, keywords):
