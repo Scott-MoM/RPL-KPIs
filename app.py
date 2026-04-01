@@ -565,7 +565,12 @@ def _format_dataframe_cell(value):
             return json.dumps(value, ensure_ascii=True, sort_keys=True)
         except Exception:
             return str(value)
-    return str(value) if isinstance(value, bytes) else value
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return str(value)
+    return str(value)
 
 def _make_arrow_compatible_df(df):
     if df is None:
