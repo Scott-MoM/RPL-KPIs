@@ -800,6 +800,22 @@ def _extract_postcode_from_value(value):
 def _normalize_person_lookup(value):
     return "".join(ch for ch in str(value or "").strip().lower() if ch.isalnum())
 
+def _normalize_gender(value):
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return "Unknown / Not provided"
+    if raw in {"prefer not to say", "prefer not say", "prefer not", "pn ts", "n/a", "na"}:
+        return "Prefer not to say"
+    if any(token in raw for token in ["trans", "non-binary", "non binary", "nonbinary", "gender diverse", "genderqueer", "agender"]):
+        return "Trans / Non-binary / Gender diverse"
+    if raw in {"m", "male", "man", "men"}:
+        return "Men"
+    if raw in {"f", "female", "woman", "women"}:
+        return "Women"
+    if raw in {"unknown", "not provided", "unspecified"}:
+        return "Unknown / Not provided"
+    return "Trans / Non-binary / Gender diverse"
+
 def _extract_coords_from_record(record):
     if not isinstance(record, dict):
         return None, None
@@ -1840,12 +1856,21 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
         )
 
     event_attendee_records = {}
+    attendee_seen = {}
     for row in datasets.get("event_attendees") or []:
         att = _sanitize(_extract_entity(row))
+        rec_id = att.get("id") or _get_row_value(att, "Record ID", "ID", "Id")
+        if not rec_id:
+            continue
+        att["id"] = str(rec_id)
+        att["created_at"] = _clean_ts(att.get("created_at") or _get_row_value(att, "Created date", "Created", "Created at"))
         event_id = _attendee_event_id(att)
         if not event_id:
             continue
         person_id = _attendee_person_id(att)
+        if person_id:
+            att["person_id"] = str(person_id)
+        att["event_id"] = str(event_id)
         name = _attendee_name(att)
         if (not name) and person_id:
             name = people_name_by_id.get(str(person_id))
@@ -1859,6 +1884,14 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
         records_bucket.append(att)
         if norm_event_id and norm_event_id != event_id:
             event_attendee_records.setdefault(norm_event_id, []).append(att)
+        attendee_seen[str(rec_id)] = {
+            "id": str(rec_id),
+            "event_id": str(event_id),
+            "person_id": str(person_id) if person_id else None,
+            "created_at": att.get("created_at"),
+            "updated_at": now_iso,
+            "payload": att,
+        }
 
     event_seen = {}
     for row in datasets["events"]:
@@ -1922,11 +1955,12 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
     people_rows = list(people_seen.values())
     org_rows = list(org_seen.values())
     event_rows = list(event_seen.values())
+    attendee_rows = list(attendee_seen.values())
     payment_rows = list(payment_seen.values())
     grant_rows = list(grant_seen.values())
     transform_duration_ms = int((time.time() - transform_started) * 1000)
 
-    total_records = len(people_rows) + len(org_rows) + len(event_rows) + len(payment_rows) + len(grant_rows)
+    total_records = len(people_rows) + len(org_rows) + len(event_rows) + len(attendee_rows) + len(payment_rows) + len(grant_rows)
     synced_records = 0
 
     def _upsert_with_progress(table_name, rows, start_pct, end_pct, label):
@@ -1963,12 +1997,15 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
         synced_records += _upsert_with_progress("beacon_organisations", org_rows, 76, 80, "organisations")
         _report(80, f"Organisations upserted: {synced_records} out of {total_records} records synced.")
 
-    _report(84, f"Upserting events ({len(event_rows)}) and payments ({len(payment_rows)})...")
+    _report(84, f"Upserting events ({len(event_rows)}), attendees ({len(attendee_rows)}) and payments ({len(payment_rows)})...")
     if event_rows:
-        synced_records += _upsert_with_progress("beacon_events", event_rows, 84, 88, "events")
-        _report(88, f"Events upserted: {synced_records} out of {total_records} records synced.")
+        synced_records += _upsert_with_progress("beacon_events", event_rows, 84, 87, "events")
+        _report(87, f"Events upserted: {synced_records} out of {total_records} records synced.")
+    if attendee_rows:
+        synced_records += _upsert_with_progress("beacon_event_attendees", attendee_rows, 87, 90, "event attendees")
+        _report(90, f"Event attendees upserted: {synced_records} out of {total_records} records synced.")
     if payment_rows:
-        synced_records += _upsert_with_progress("beacon_payments", payment_rows, 88, 92, "payments")
+        synced_records += _upsert_with_progress("beacon_payments", payment_rows, 90, 94, "payments")
         _report(92, f"Payments upserted: {synced_records} out of {total_records} records synced.")
 
     _report(94, f"Upserting grants ({len(grant_rows)})...")
@@ -1984,6 +2021,7 @@ def sync_beacon_api_to_supabase(admin_client, progress_callback=None, should_can
         "people": len(people_rows),
         "organisations": len(org_rows),
         "events": len(event_rows),
+        "event_attendees": len(attendee_rows),
         "payments": len(payment_rows),
         "grants": len(grant_rows),
         "synced_at": now_iso,
@@ -2761,6 +2799,7 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
                 "region": ", ".join(_to_list(e.get("c_region"))),
                 "participant_list": participant_list,
                 "participant_ids": participant_ids,
+                "attendee_records": event_attendee_records.get(str(event_id)) or event_attendee_records.get(_id_key(event_id)) or [],
                 "raw_event": e,
             })
 
@@ -2769,9 +2808,25 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
         walks_delivered = len(region_events)
         participants = sum(_event_attendees(e) for e in region_events)
 
+    attendee_gender_demographics = {}
+    seen_attendees = set()
+    for event in region_events:
+        event_id = str(event.get("id") or "")
+        attendee_rows = event_attendee_records.get(event_id) or event_attendee_records.get(_id_key(event_id)) or []
+        for attendee in attendee_rows:
+            if not isinstance(attendee, dict):
+                continue
+            attendee_key = str(attendee.get("id") or f"{event_id}:{attendee.get('person_id') or attendee.get('name') or attendee.get('email') or ''}").strip()
+            if attendee_key in seen_attendees:
+                continue
+            seen_attendees.add(attendee_key)
+            label = _normalize_gender(_get_row_value(attendee, "Gender", "gender"))
+            attendee_gender_demographics[label] = attendee_gender_demographics.get(label, 0) + 1
+
     # Delivery demographics from currently available fields.
-    # Priority 1: people type tags (closest to participant cohorts)
-    # Priority 2: event type split (delivery segmentation fallback)
+    # Priority 1: event attendee gender
+    # Priority 2: people type tags
+    # Priority 3: event type split
     demographic_keyword_map = {
         "Men": ["men", "male"],
         "Women": ["women", "female"],
@@ -2791,7 +2846,10 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
             if any(k in person_text for k in keywords):
                 people_tag_demographics[label] = people_tag_demographics.get(label, 0) + 1
 
-    if people_tag_demographics:
+    if attendee_gender_demographics:
+        delivery_demographics = attendee_gender_demographics
+        delivery_demographics_source = "event_attendee_gender"
+    elif people_tag_demographics:
         delivery_demographics = people_tag_demographics
         delivery_demographics_source = "people_type_tags"
     elif event_type_counts:
@@ -2962,6 +3020,7 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
     org_rows = _safe_fetch("beacon_organisations", "payload, created_at", "created_at")
     # For events, we need the region column as well to ensure robust mapping.
     event_rows = _safe_fetch("beacon_events", "payload, start_date, region", "start_date")
+    attendee_rows = _safe_fetch("beacon_event_attendees", "payload, event_id, person_id, created_at", "created_at")
     payment_rows = _safe_fetch("beacon_payments", "payload, payment_date", "payment_date")
     grant_rows = _safe_fetch("beacon_grants", "payload, close_date", "close_date")
 
@@ -2969,7 +3028,7 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
         failed_tables = ", ".join(t for t, _ in fetch_errors)
         st.warning(f"Temporary Supabase issue while loading: {failed_tables}. Showing available data.")
         # If everything failed, still show explicit error and return no data.
-        if not any([people_rows, org_rows, event_rows, payment_rows, grant_rows]):
+        if not any([people_rows, org_rows, event_rows, attendee_rows, payment_rows, grant_rows]):
             first_error = fetch_errors[0][1] if fetch_errors else "Unknown error"
             st.error(f"Supabase Data Error: {first_error}")
             return None
@@ -3014,7 +3073,25 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
             payload["close_date"] = r.get("close_date")
         grants.append(payload)
 
-    result = compute_kpis(region, people, organisations, events, payments, grants)
+    event_attendee_records = {}
+    for r in attendee_rows:
+        payload = r.get("payload") or {}
+        event_id = payload.get("event_id") or r.get("event_id")
+        person_id = payload.get("person_id") or r.get("person_id")
+        if person_id and not payload.get("person_id"):
+            payload["person_id"] = person_id
+        if event_id and not payload.get("event_id"):
+            payload["event_id"] = event_id
+        if r.get("created_at") and not payload.get("created_at"):
+            payload["created_at"] = r.get("created_at")
+        if not event_id:
+            continue
+        event_attendee_records.setdefault(str(event_id), []).append(payload)
+        norm_event_id = _entity_ref_key(event_id)
+        if norm_event_id and norm_event_id != str(event_id):
+            event_attendee_records.setdefault(norm_event_id, []).append(payload)
+
+    result = compute_kpis(region, people, organisations, events, payments, grants, event_attendee_records=event_attendee_records)
     result["_source"] = "supabase"
     return result
 
@@ -3027,6 +3104,7 @@ def get_last_refresh_timestamp():
             "beacon_people",
             "beacon_organisations",
             "beacon_events",
+            "beacon_event_attendees",
             "beacon_payments",
             "beacon_grants",
         ]
@@ -5095,7 +5173,9 @@ def main_dashboard():
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
         st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
         _safe_dataframe(df_demo, width="stretch", hide_index=True)
-        if demo_source == "people_type_tags":
+        if demo_source == "event_attendee_gender":
+            st.caption("Demographics shown from attendee Gender values synced from Beacon and normalized into dashboard groupings.")
+        elif demo_source == "people_type_tags":
             st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
         elif demo_source == "event_type_split":
             st.caption("No participant cohort tags found; chart falls back to event type split.")
