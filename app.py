@@ -3201,6 +3201,55 @@ def fetch_funder_dashboard_data(region, start_date=None, end_date=None, include_
     result["_source"] = "supabase_funder"
     return result
 
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_kpi_section_data(section, region, start_date=None, end_date=None):
+    if DB_TYPE != 'supabase':
+        return None
+    start_iso = start_date.isoformat() if start_date else None
+    end_iso = end_date.isoformat() if end_date else None
+    fetch_errors = []
+
+    def _safe_fetch(table, columns, date_field):
+        try:
+            return _fetch_supabase_rows(table, columns, date_field, start_iso, end_iso)
+        except Exception as e:
+            fetch_errors.append((table, str(e)))
+            return []
+
+    people_rows = []
+    org_rows = []
+    event_rows = []
+    attendee_rows = []
+    payment_rows = []
+    grant_rows = []
+
+    if section in {"Governance", "Delivery"}:
+        people_rows = _safe_fetch("beacon_people", "payload, created_at", "created_at")
+    if section in {"Partnerships", "Income"}:
+        org_rows = _safe_fetch("beacon_organisations", "payload, created_at", "created_at")
+    if section == "Delivery":
+        event_rows = _safe_fetch("beacon_events", "payload, start_date, region", "start_date")
+        attendee_rows = _safe_fetch("beacon_event_attendees", "payload, event_id, person_id, created_at", "created_at")
+    if section == "Income":
+        payment_rows = _safe_fetch("beacon_payments", "payload, payment_date", "payment_date")
+        grant_rows = _safe_fetch("beacon_grants", "payload, close_date", "close_date")
+
+    if fetch_errors and not any([people_rows, org_rows, event_rows, attendee_rows, payment_rows, grant_rows]):
+        first_error = fetch_errors[0][1] if fetch_errors else "Unknown error"
+        st.error(f"Supabase Data Error: {first_error}")
+        return None
+
+    people = _rows_to_payloads(people_rows, date_field="created_at")
+    organisations = _rows_to_payloads(org_rows, date_field="created_at")
+    events = _rows_to_payloads(event_rows, date_field="start_date", region_field="region")
+    payments = _rows_to_payloads(payment_rows, date_field="payment_date")
+    grants = _rows_to_payloads(grant_rows, date_field="close_date")
+    event_attendee_records = _build_event_attendee_records(attendee_rows)
+    result = compute_kpis(region, people, organisations, events, payments, grants, event_attendee_records=event_attendee_records)
+    result["_source"] = "supabase_kpi_section"
+    result["_section"] = section
+    return result
+
 @st.cache_data(show_spinner=False, ttl=120)
 def get_last_refresh_timestamp():
     if DB_TYPE != 'supabase':
@@ -4942,10 +4991,30 @@ def main_dashboard():
         region_val = default_region
     st.sidebar.caption(f"Region: {region_val}")
 
+    show_global_only_kpis = region_val == "Global"
+    section_labels = ["Governance", "Partnerships", "Delivery"]
+    if show_global_only_kpis:
+        section_labels.extend(["Income", "Comms"])
+    section_labels.append("Case Studies")
+    active_section = st.sidebar.selectbox(
+        "KPI Section",
+        section_labels,
+        index=0,
+        key="kpi_active_section",
+    )
+
     timeframe, start_date, end_date = get_time_filters()
-    
-    
-    data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+
+    show_debug = False
+    if st.session_state.get("role") in ["Admin", "Manager", "RPL", "ML"]:
+        show_debug = st.sidebar.checkbox("Show KPI Debug", value=False, key="kpi_show_debug")
+
+    if active_section == "Case Studies":
+        data = {"region": region_val, "_raw_kpi": {}, "_debug": {}}
+    elif show_debug:
+        data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+    else:
+        data = fetch_kpi_section_data(active_section, region_val, start_date=start_date, end_date=end_date)
     if not data:
         st.error("No Supabase data found for the selected filters.")
         return
@@ -4954,9 +5023,6 @@ def main_dashboard():
     # Removed header metadata captions per request
     st.markdown('<div class="section-card"><span class="badge">Live KPI Overview</span></div>', unsafe_allow_html=True)
 
-    show_debug = False
-    if st.session_state.get("role") in ["Admin", "Manager", "RPL", "ML"]:
-        show_debug = st.sidebar.checkbox("Show KPI Debug", value=False, key="kpi_show_debug")
     if show_debug:
         debug = data.get("_debug") or {}
         st.markdown("### KPI Debug Counts")
@@ -5072,19 +5138,6 @@ def main_dashboard():
             st.json(selected, expanded=False)
         return selected
     
-
-    # Active section selector
-    show_global_only_kpis = data.get("region") == "Global"
-    section_labels = ["Governance", "Partnerships", "Delivery"]
-    if show_global_only_kpis:
-        section_labels.extend(["Income", "Comms"])
-    section_labels.append("Case Studies")
-    active_section = st.selectbox(
-        "KPI Section",
-        section_labels,
-        index=0,
-        key="kpi_active_section",
-    )
 
     if not show_global_only_kpis:
         st.info("Income & Funding and Communications & Profile are now tracked as global-only KPIs and are shown only when the region filter is set to Global.")
