@@ -446,6 +446,15 @@ def get_admin_client():
     except Exception:
         return None
 
+def _get_openrouteservice_api_key():
+    if "openrouteservice" in st.secrets:
+        return str(st.secrets["openrouteservice"].get("api_key") or "").strip()
+    if "routing" in st.secrets:
+        provider = str(st.secrets["routing"].get("provider") or "").strip().lower()
+        if provider in {"openrouteservice", "ors"}:
+            return str(st.secrets["routing"].get("api_key") or "").strip()
+    return ""
+
 # --- AUDIT LOGGING HELPER ---
 def log_audit_event(action, details=None):
     """Utility to record administrative actions to the audit log."""
@@ -927,9 +936,42 @@ def _haversine_miles(lat1, lon1, lat2, lon2):
     a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return 2 * radius_miles * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
+@st.cache_data(show_spinner=False, ttl=2592000)
+def _lookup_road_distance_miles(lat1, lon1, lat2, lon2, api_key):
+    if not api_key:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.openrouteservice.org/v2/directions/driving-car",
+            headers={
+                "Authorization": api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "coordinates": [
+                    [float(lon1), float(lat1)],
+                    [float(lon2), float(lat2)],
+                ]
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        payload = resp.json() or {}
+        routes = payload.get("routes") or []
+        if not routes:
+            return None
+        summary = routes[0].get("summary") or {}
+        distance_meters = summary.get("distance")
+        if distance_meters in (None, ""):
+            return None
+        return float(distance_meters) / 1609.344
+    except Exception:
+        return None
+
 @st.cache_data(show_spinner=False, ttl=900)
 def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None):
     batch_size = 1000
+    road_api_key = _get_openrouteservice_api_key()
 
     def _fetch_rows(table, select_cols, date_col=None):
         offset = 0
@@ -1044,7 +1086,11 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
             p_lon = person.get("participant_lon")
             e_lat = event_loc.get("lat")
             e_lon = event_loc.get("lon")
-            distance_miles = None if None in (p_lat, p_lon, e_lat, e_lon) else _haversine_miles(p_lat, p_lon, e_lat, e_lon)
+            straight_line_miles = None if None in (p_lat, p_lon, e_lat, e_lon) else _haversine_miles(p_lat, p_lon, e_lat, e_lon)
+            road_distance_miles = None if None in (p_lat, p_lon, e_lat, e_lon) else _lookup_road_distance_miles(
+                p_lat, p_lon, e_lat, e_lon, road_api_key
+            )
+            distance_miles = road_distance_miles if road_distance_miles is not None else straight_line_miles
             analysis_rows.append({
                 "event_id": str(payload.get("id") or ""),
                 "event_name": event_name,
@@ -1057,6 +1103,7 @@ def fetch_distance_analysis_data(region="Global", start_date=None, end_date=None
                 "participant": person.get("participant") or "Participant",
                 "participant_postcode": person.get("participant_postcode") or "",
                 "distance_miles": distance_miles,
+                "distance_method": "road" if road_distance_miles is not None else ("straight_line" if straight_line_miles is not None else ""),
             })
 
     df = pd.DataFrame(analysis_rows)
@@ -5877,7 +5924,15 @@ def custom_reports_dashboard():
 
     if report_type == "Distance Analysis":
         st.subheader("Participant Travel Distance")
-        st.caption("Estimates participant travel from home postcode to the selected walk or retreat location.")
+        road_distance_enabled = bool(_get_openrouteservice_api_key())
+        st.caption(
+            "Estimates participant travel from home postcode to the selected walk or retreat location "
+            "using road distance when routing is configured, with straight-line fallback where needed."
+        )
+        if road_distance_enabled:
+            st.info("Road distance routing is enabled via openrouteservice.")
+        else:
+            st.info("Road distance routing is not configured. Results are currently straight-line miles only.")
         distance_df = fetch_distance_analysis_data(region=region_val, start_date=start_date, end_date=end_date)
         if distance_df.empty:
             st.warning("No participant-event links were found for the selected filters.")
@@ -5994,6 +6049,7 @@ def custom_reports_dashboard():
             "participant",
             "participant_postcode",
             "distance_miles",
+            "distance_method",
         ]
         detail_limit = st.number_input("Detail rows", min_value=25, max_value=5000, value=250, step=25, key="reports_distance_detail_limit")
         detail_source_df = event_detail_df if not event_detail_df.empty else distance_df
