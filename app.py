@@ -5934,7 +5934,7 @@ def custom_reports_dashboard():
         render_plot_with_export(fig_bands, "participant-distance-bands", "reports_distance_bands")
 
         event_summary = (
-            distance_df.groupby(["event_name", "event_type", "event_region"], as_index=False)
+            distance_df.groupby(["event_id", "event_name", "event_type", "event_region"], as_index=False)
             .agg(
                 participant_journeys=("participant", "count"),
                 avg_distance_miles=("distance_miles", "mean"),
@@ -5944,7 +5944,45 @@ def custom_reports_dashboard():
             .sort_values(["avg_distance_miles", "participant_journeys"], ascending=[False, False])
         )
         st.markdown("**Events Ranked By Average Travel Distance**")
-        _safe_dataframe(event_summary.head(100), width="stretch", hide_index=True)
+        summary_display = event_summary.drop(columns=["event_id"]).head(100)
+        _safe_dataframe(summary_display, width="stretch", hide_index=True)
+
+        event_summary = event_summary.copy()
+        event_summary["event_label"] = event_summary.apply(
+            lambda row: (
+                f"{row['event_name']} | {row['event_type']} | {row['event_region']} | "
+                f"{row['participant_journeys']} journeys | avg {row['avg_distance_miles']:.1f} miles"
+            ),
+            axis=1,
+        )
+        event_options = event_summary["event_label"].tolist()
+        selected_event_label = st.selectbox(
+            "Drill down into event",
+            event_options,
+            index=0 if event_options else None,
+            key="reports_distance_selected_event",
+        )
+        selected_event_id = event_summary.loc[
+            event_summary["event_label"] == selected_event_label, "event_id"
+        ].iloc[0] if selected_event_label else None
+        event_detail_df = distance_df[
+            distance_df["event_id"].astype(str) == str(selected_event_id)
+        ].copy() if selected_event_id is not None else pd.DataFrame()
+
+        if not event_detail_df.empty:
+            selected_event = event_summary.loc[
+                event_summary["event_id"].astype(str) == str(selected_event_id)
+            ].iloc[0]
+            st.markdown("**Selected Event Journey Detail**")
+            st.caption(
+                f"{selected_event['event_name']} | {selected_event['event_type']} | "
+                f"{selected_event['event_region']}"
+            )
+            e1, e2, e3, e4 = st.columns(4)
+            e1.metric("Journeys", f"{len(event_detail_df):,}")
+            e2.metric("Avg distance", f"{event_detail_df['distance_miles'].mean():.1f} miles")
+            e3.metric("Median distance", f"{event_detail_df['distance_miles'].median():.1f} miles")
+            e4.metric("Max distance", f"{event_detail_df['distance_miles'].max():.1f} miles")
 
         detail_cols = [
             "event_date",
@@ -5958,9 +5996,18 @@ def custom_reports_dashboard():
             "distance_miles",
         ]
         detail_limit = st.number_input("Detail rows", min_value=25, max_value=5000, value=250, step=25, key="reports_distance_detail_limit")
-        detail_df = distance_df[detail_cols].sort_values("distance_miles", ascending=False).head(int(detail_limit))
+        detail_source_df = event_detail_df if not event_detail_df.empty else distance_df
+        detail_df = detail_source_df[detail_cols].sort_values("distance_miles", ascending=False).head(int(detail_limit))
         st.markdown("**Participant-Level Journey Detail**")
         _safe_dataframe(detail_df, width="stretch", hide_index=True)
+        if not event_detail_df.empty:
+            st.download_button(
+                "Download Selected Event CSV",
+                data=event_detail_df.to_csv(index=False).encode("utf-8"),
+                file_name="participant_distance_selected_event.csv",
+                mime="text/csv",
+                key="reports_distance_selected_event_csv",
+            )
         st.download_button(
             "Download Distance Analysis CSV",
             data=distance_df.to_csv(index=False).encode("utf-8"),
