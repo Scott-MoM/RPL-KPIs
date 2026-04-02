@@ -3020,58 +3020,89 @@ def get_mock_data(region):
     }
 
 @st.cache_data(show_spinner=False, ttl=300)
+def _fetch_supabase_rows(table, columns, date_field=None, start_iso=None, end_iso=None, batch_size=1000, max_retries=4):
+    if DB_TYPE != 'supabase':
+        return []
+    rows = []
+    offset = 0
+    while True:
+        attempt = 0
+        while True:
+            try:
+                q = DB_CLIENT.table(table).select(columns)
+                if date_field and start_iso:
+                    q = q.gte(date_field, start_iso)
+                if date_field and end_iso:
+                    q = q.lte(date_field, end_iso)
+                chunk = q.range(offset, offset + batch_size - 1).execute().data or []
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                retriable = any(
+                    token in msg
+                    for token in (
+                        "502",
+                        "bad gateway",
+                        "json could not be generated",
+                        "timeout",
+                        "timed out",
+                        "connection reset",
+                        "temporarily unavailable",
+                    )
+                )
+                if retriable and attempt < max_retries:
+                    time.sleep(min(8, 1.5 * (2 ** attempt)))
+                    attempt += 1
+                    continue
+                raise
+        rows.extend(chunk)
+        if len(chunk) < batch_size:
+            break
+        offset += batch_size
+    return rows
+
+def _rows_to_payloads(rows, date_field=None, region_field=None):
+    payloads = []
+    for row in rows:
+        payload = row.get("payload") or {}
+        if date_field and row.get(date_field) and not payload.get(date_field):
+            payload[date_field] = row.get(date_field)
+        if region_field and row.get(region_field) and not payload.get("c_region"):
+            payload["c_region"] = [row.get(region_field)]
+        payloads.append(payload)
+    return payloads
+
+def _build_event_attendee_records(attendee_rows):
+    event_attendee_records = {}
+    for row in attendee_rows:
+        payload = row.get("payload") or {}
+        event_id = payload.get("event_id") or row.get("event_id")
+        person_id = payload.get("person_id") or row.get("person_id")
+        if person_id and not payload.get("person_id"):
+            payload["person_id"] = person_id
+        if event_id and not payload.get("event_id"):
+            payload["event_id"] = event_id
+        if row.get("created_at") and not payload.get("created_at"):
+            payload["created_at"] = row.get("created_at")
+        if not event_id:
+            continue
+        event_attendee_records.setdefault(str(event_id), []).append(payload)
+        norm_event_id = _entity_ref_key(event_id)
+        if norm_event_id and norm_event_id != str(event_id):
+            event_attendee_records.setdefault(norm_event_id, []).append(payload)
+    return event_attendee_records
+
+@st.cache_data(show_spinner=False, ttl=300)
 def fetch_supabase_data(region, start_date=None, end_date=None):
     if DB_TYPE != 'supabase':
         return None
-
-    def _apply_date_filter(query, field):
-        if start_date:
-            query = query.gte(field, start_date.isoformat())
-        if end_date:
-            query = query.lte(field, end_date.isoformat())
-        return query
-
-    def _fetch_all_rows(table, columns, date_field=None, batch_size=1000, max_retries=4):
-        rows = []
-        offset = 0
-        while True:
-            attempt = 0
-            while True:
-                try:
-                    q = DB_CLIENT.table(table).select(columns)
-                    if date_field:
-                        q = _apply_date_filter(q, date_field)
-                    chunk = q.range(offset, offset + batch_size - 1).execute().data or []
-                    break
-                except Exception as e:
-                    msg = str(e).lower()
-                    retriable = any(
-                        token in msg
-                        for token in (
-                            "502",
-                            "bad gateway",
-                            "json could not be generated",
-                            "timeout",
-                            "timed out",
-                            "connection reset",
-                            "temporarily unavailable",
-                        )
-                    )
-                    if retriable and attempt < max_retries:
-                        time.sleep(min(8, 1.5 * (2 ** attempt)))
-                        attempt += 1
-                        continue
-                    raise
-            rows.extend(chunk)
-            if len(chunk) < batch_size:
-                break
-            offset += batch_size
-        return rows
+    start_iso = start_date.isoformat() if start_date else None
+    end_iso = end_date.isoformat() if end_date else None
 
     fetch_errors = []
     def _safe_fetch(table, columns, date_field):
         try:
-            return _fetch_all_rows(table, columns, date_field)
+            return _fetch_supabase_rows(table, columns, date_field, start_iso, end_iso)
         except Exception as e:
             fetch_errors.append((table, str(e)))
             return []
@@ -3093,66 +3124,81 @@ def fetch_supabase_data(region, start_date=None, end_date=None):
             st.error(f"Supabase Data Error: {first_error}")
             return None
 
-    people = []
-    for r in people_rows:
-        payload = r.get("payload") or {}
-        if r.get("created_at") and not payload.get("created_at"):
-            payload["created_at"] = r.get("created_at")
-        people.append(payload)
-
-    organisations = []
-    for r in org_rows:
-        payload = r.get("payload") or {}
-        if r.get("created_at") and not payload.get("created_at"):
-            payload["created_at"] = r.get("created_at")
-        organisations.append(payload)
-
-    events = []
-    for r in event_rows:
-        payload = r.get("payload") or {}
-        if r.get("start_date") and not payload.get("start_date"):
-            payload["start_date"] = r.get("start_date")
-        
-        # Ensure c_region is populated
-        if r.get("region") and not payload.get("c_region"):
-            payload["c_region"] = [r.get("region")]
-            
-        events.append(payload)
-
-    payments = []
-    for r in payment_rows:
-        payload = r.get("payload") or {}
-        if r.get("payment_date") and not payload.get("payment_date"):
-            payload["payment_date"] = r.get("payment_date")
-        payments.append(payload)
-
-    grants = []
-    for r in grant_rows:
-        payload = r.get("payload") or {}
-        if r.get("close_date") and not payload.get("close_date"):
-            payload["close_date"] = r.get("close_date")
-        grants.append(payload)
-
-    event_attendee_records = {}
-    for r in attendee_rows:
-        payload = r.get("payload") or {}
-        event_id = payload.get("event_id") or r.get("event_id")
-        person_id = payload.get("person_id") or r.get("person_id")
-        if person_id and not payload.get("person_id"):
-            payload["person_id"] = person_id
-        if event_id and not payload.get("event_id"):
-            payload["event_id"] = event_id
-        if r.get("created_at") and not payload.get("created_at"):
-            payload["created_at"] = r.get("created_at")
-        if not event_id:
-            continue
-        event_attendee_records.setdefault(str(event_id), []).append(payload)
-        norm_event_id = _entity_ref_key(event_id)
-        if norm_event_id and norm_event_id != str(event_id):
-            event_attendee_records.setdefault(norm_event_id, []).append(payload)
+    people = _rows_to_payloads(people_rows, date_field="created_at")
+    organisations = _rows_to_payloads(org_rows, date_field="created_at")
+    events = _rows_to_payloads(event_rows, date_field="start_date", region_field="region")
+    payments = _rows_to_payloads(payment_rows, date_field="payment_date")
+    grants = _rows_to_payloads(grant_rows, date_field="close_date")
+    event_attendee_records = _build_event_attendee_records(attendee_rows)
 
     result = compute_kpis(region, people, organisations, events, payments, grants, event_attendee_records=event_attendee_records)
     result["_source"] = "supabase"
+    return result
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_ml_dashboard_data(region, start_date=None, end_date=None):
+    if DB_TYPE != 'supabase':
+        return None
+    start_iso = start_date.isoformat() if start_date else None
+    end_iso = end_date.isoformat() if end_date else None
+    fetch_errors = []
+
+    def _safe_fetch(table, columns, date_field):
+        try:
+            return _fetch_supabase_rows(table, columns, date_field, start_iso, end_iso)
+        except Exception as e:
+            fetch_errors.append((table, str(e)))
+            return []
+
+    people_rows = _safe_fetch("beacon_people", "payload, created_at", "created_at")
+    event_rows = _safe_fetch("beacon_events", "payload, start_date, region", "start_date")
+    attendee_rows = _safe_fetch("beacon_event_attendees", "payload, event_id, person_id, created_at", "created_at")
+
+    if fetch_errors and not any([people_rows, event_rows, attendee_rows]):
+        first_error = fetch_errors[0][1] if fetch_errors else "Unknown error"
+        st.error(f"Supabase Data Error: {first_error}")
+        return None
+
+    people = _rows_to_payloads(people_rows, date_field="created_at")
+    events = _rows_to_payloads(event_rows, date_field="start_date", region_field="region")
+    event_attendee_records = _build_event_attendee_records(attendee_rows)
+    result = compute_kpis(region, people, [], events, [], [], event_attendee_records=event_attendee_records)
+    result["_source"] = "supabase_ml"
+    return result
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_funder_dashboard_data(region, start_date=None, end_date=None, include_summary=True):
+    if DB_TYPE != 'supabase':
+        return None
+    start_iso = start_date.isoformat() if start_date else None
+    end_iso = end_date.isoformat() if end_date else None
+    fetch_errors = []
+
+    def _safe_fetch(table, columns, date_field):
+        try:
+            return _fetch_supabase_rows(table, columns, date_field, start_iso, end_iso)
+        except Exception as e:
+            fetch_errors.append((table, str(e)))
+            return []
+
+    org_rows = _safe_fetch("beacon_organisations", "payload, created_at", "created_at")
+    payment_rows = _safe_fetch("beacon_payments", "payload, payment_date", "payment_date")
+    grant_rows = _safe_fetch("beacon_grants", "payload, close_date", "close_date")
+    people_rows = _safe_fetch("beacon_people", "payload, created_at", "created_at") if include_summary else []
+    event_rows = _safe_fetch("beacon_events", "payload, start_date, region", "start_date") if include_summary else []
+
+    if fetch_errors and not any([org_rows, payment_rows, grant_rows, people_rows, event_rows]):
+        first_error = fetch_errors[0][1] if fetch_errors else "Unknown error"
+        st.error(f"Supabase Data Error: {first_error}")
+        return None
+
+    people = _rows_to_payloads(people_rows, date_field="created_at")
+    organisations = _rows_to_payloads(org_rows, date_field="created_at")
+    events = _rows_to_payloads(event_rows, date_field="start_date", region_field="region")
+    payments = _rows_to_payloads(payment_rows, date_field="payment_date")
+    grants = _rows_to_payloads(grant_rows, date_field="close_date")
+    result = compute_kpis(region, people, organisations, events, payments, grants, event_attendee_records={})
+    result["_source"] = "supabase_funder"
     return result
 
 @st.cache_data(show_spinner=False, ttl=120)
@@ -3790,7 +3836,7 @@ def ml_dashboard():
 
     timeframe, start_date, end_date = get_time_filters()
 
-    data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+    data = fetch_ml_dashboard_data(region_val, start_date=start_date, end_date=end_date)
     if not data:
         st.error("No event data is available for the selected filters.")
         return
@@ -4114,7 +4160,12 @@ def funder_dashboard():
         start_date = pd.Timestamp(custom_start)
         end_date = pd.Timestamp(custom_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
 
-    data = fetch_supabase_data(region_val, start_date=start_date, end_date=end_date)
+    data = fetch_funder_dashboard_data(
+        region_val,
+        start_date=start_date,
+        end_date=end_date,
+        include_summary=(role != "Funder"),
+    )
     if not data:
         st.error("No dashboard data is available for this public view.")
         return
@@ -5022,25 +5073,24 @@ def main_dashboard():
         return selected
     
 
-    # Tabs
+    # Active section selector
     show_global_only_kpis = data.get("region") == "Global"
-    tab_labels = ["Governance", "Partnerships", "Delivery"]
+    section_labels = ["Governance", "Partnerships", "Delivery"]
     if show_global_only_kpis:
-        tab_labels.extend(["Income", "Comms"])
-    tab_labels.append("Case Studies")
-    tabs = st.tabs(tab_labels)
-    tab_gov = tabs[0]
-    tab_part = tabs[1]
-    tab_del = tabs[2]
-    tab_case = tabs[-1]
-    tab_inc = tabs[3] if show_global_only_kpis else None
-    tab_com = tabs[4] if show_global_only_kpis else None
+        section_labels.extend(["Income", "Comms"])
+    section_labels.append("Case Studies")
+    active_section = st.selectbox(
+        "KPI Section",
+        section_labels,
+        index=0,
+        key="kpi_active_section",
+    )
 
     if not show_global_only_kpis:
         st.info("Income & Funding and Communications & Profile are now tracked as global-only KPIs and are shown only when the region filter is set to Global.")
 
     # --- A. Governance ---
-    with tab_gov:
+    if active_section == "Governance":
         st.header("Governance & Infrastructure")
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -5109,7 +5159,7 @@ def main_dashboard():
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- B. Partnerships ---
-    with tab_part:
+    if active_section == "Partnerships":
         st.header("Partnerships & Influence")
         data_lsp = [{"Sector": k, "Count": v, "Type": "Strategic (LSP)"} for k, v in data['partnerships']['LSP'].items()]
         data_ldp = [{"Sector": k, "Count": v, "Type": "Delivery (LDP)"} for k, v in data['partnerships']['LDP'].items()]
@@ -5157,7 +5207,7 @@ def main_dashboard():
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- C. Delivery ---
-    with tab_del:
+    if active_section == "Delivery":
         st.header("Delivery, Reach & Impact")
         m1, m2, m3, m4 = st.columns(4)
         with m1:
@@ -5277,8 +5327,7 @@ def main_dashboard():
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- D. Income ---
-    if show_global_only_kpis:
-        with tab_inc:
+    if show_global_only_kpis and active_section == "Income":
             st.header("Income & Funding")
             c1, c2 = st.columns(2)
             with c1:
@@ -5438,7 +5487,7 @@ def main_dashboard():
                 st.info("No income records found for this period.")
 
         # --- E. Comms ---
-        with tab_com:
+    if show_global_only_kpis and active_section == "Comms":
             st.header("Communications & Profile")
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -5456,7 +5505,7 @@ def main_dashboard():
             st.caption("Click a metric above to open its drill-down popup.")
 
     # --- CASE STUDIES ---
-    with tab_case:
+    if active_section == "Case Studies":
         case_studies_page(
             allow_upload=False,
             start_date=start_date,
@@ -5848,6 +5897,30 @@ def custom_reports_dashboard():
     st.sidebar.caption(f"Region: {region_val}")
 
     timeframe, start_date, end_date = get_time_filters()
+    current_filters = {
+        "selected_datasets": list(selected_datasets or []),
+        "report_type": report_type,
+        "region_val": region_val,
+        "timeframe": timeframe,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }
+    apply_filters = st.sidebar.button("Apply Report Filters", key="reports_apply_filters")
+    if apply_filters or "reports_applied_filters" not in st.session_state:
+        st.session_state["reports_applied_filters"] = current_filters
+
+    applied_filters = st.session_state.get("reports_applied_filters", current_filters)
+    filters_dirty = applied_filters != current_filters
+    if filters_dirty:
+        st.sidebar.caption("Filters changed. Click Apply Report Filters to refresh the report.")
+
+    selected_datasets = applied_filters.get("selected_datasets") or []
+    report_type = applied_filters.get("report_type") or report_type
+    region_val = applied_filters.get("region_val") or region_val
+    timeframe = applied_filters.get("timeframe") or timeframe
+    start_date = pd.to_datetime(applied_filters.get("start_date")) if applied_filters.get("start_date") else None
+    end_date = pd.to_datetime(applied_filters.get("end_date")) if applied_filters.get("end_date") else None
+
     if not selected_datasets:
         st.warning("Select at least one dataset.")
         return
@@ -5900,6 +5973,27 @@ def custom_reports_dashboard():
                 key="reports_value_range"
             )
         require_date = st.checkbox("Only include rows with valid date", value=False, key="reports_require_date")
+
+    current_advanced_filters = {
+        "dataset_filter": list(dataset_filter or []),
+        "category_filter": list(category_filter or []),
+        "status_filter": list(status_filter or []),
+        "value_range": tuple(value_range),
+        "require_date": bool(require_date),
+    }
+    apply_advanced = st.sidebar.button("Apply Advanced Filters", key="reports_apply_advanced_filters")
+    if apply_advanced or "reports_applied_advanced_filters" not in st.session_state:
+        st.session_state["reports_applied_advanced_filters"] = current_advanced_filters
+
+    applied_advanced_filters = st.session_state.get("reports_applied_advanced_filters", current_advanced_filters)
+    if applied_advanced_filters != current_advanced_filters:
+        st.sidebar.caption("Advanced filters changed. Click Apply Advanced Filters to update the results.")
+
+    dataset_filter = applied_advanced_filters.get("dataset_filter") or []
+    category_filter = applied_advanced_filters.get("category_filter") or []
+    status_filter = applied_advanced_filters.get("status_filter") or []
+    value_range = tuple(applied_advanced_filters.get("value_range") or value_range)
+    require_date = bool(applied_advanced_filters.get("require_date"))
 
     if dataset_filter:
         df = df[df["dataset"].astype(str).isin(dataset_filter)]
