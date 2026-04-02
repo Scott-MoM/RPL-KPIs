@@ -480,6 +480,107 @@ def log_audit_state_change(state_key, action, details=None):
     st.session_state[ss_key] = marker
     log_audit_event(action, payload)
 
+def _sanitize_audit_value(value, max_len=500):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        text = value
+    elif isinstance(value, (list, tuple, set)):
+        text = [_sanitize_audit_value(v, max_len=120) for v in list(value)[:50]]
+    elif isinstance(value, dict):
+        text = {
+            str(k): _sanitize_audit_value(v, max_len=120)
+            for idx, (k, v) in enumerate(value.items())
+            if idx < 50
+        }
+    else:
+        text = str(value)
+    if isinstance(text, str) and len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
+def _should_audit_session_key(key):
+    key_l = str(key or "").strip().lower()
+    if not key_l:
+        return False
+    if key_l.startswith("_"):
+        return False
+    if key_l.startswith("formsubmitter:"):
+        return False
+    if key_l in {
+        "logged_in",
+        "name",
+        "email",
+        "role",
+        "roles",
+        "region",
+        "supabase_role",
+        "force_password_change",
+    }:
+        return False
+    sensitive_tokens = ("password", "token", "secret", "api_key", "service_role_key")
+    if any(token in key_l for token in sensitive_tokens):
+        return False
+    internal_tokens = (
+        "manual_sync",
+        "sync_jobs",
+        "reports_applied_filters",
+        "reports_applied_advanced_filters",
+        "audit_state",
+    )
+    if any(token in key_l for token in internal_tokens):
+        return False
+    return True
+
+def _capture_audit_session_snapshot():
+    snapshot = {}
+    for key, value in st.session_state.items():
+        if not _should_audit_session_key(key):
+            continue
+        snapshot[str(key)] = _sanitize_audit_value(value)
+    return snapshot
+
+def audit_user_interactions(current_view=None):
+    if DB_TYPE != 'supabase':
+        return
+    if not st.session_state.get("logged_in"):
+        return
+    previous = st.session_state.get("_audit_widget_snapshot")
+    current = _capture_audit_session_snapshot()
+    if previous is None:
+        st.session_state["_audit_widget_snapshot"] = current
+        return
+
+    changes = []
+    all_keys = sorted(set(previous.keys()) | set(current.keys()))
+    for key in all_keys:
+        old = previous.get(key)
+        new = current.get(key)
+        if old == new:
+            continue
+        change_type = "changed"
+        if key not in previous:
+            change_type = "added"
+        elif key not in current:
+            change_type = "removed"
+        changes.append({
+            "key": key,
+            "change_type": change_type,
+            "previous_value": old,
+            "current_value": new,
+        })
+
+    st.session_state["_audit_widget_snapshot"] = current
+    if not changes:
+        return
+
+    log_audit_event(
+        "UI Interaction",
+        {
+            "view": current_view or "",
+            "change_count": len(changes),
+            "changes": changes[:100],
+        },
+    )
+
 # --- DATA HELPERS ---
 def _clean_ts(value):
     if value is None:
@@ -6465,6 +6566,8 @@ def main():
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
+
+        audit_user_interactions(current_view=current_view)
 
         if sync_running and role == "Admin" and current_view == "Admin Dashboard":
             time.sleep(1)
