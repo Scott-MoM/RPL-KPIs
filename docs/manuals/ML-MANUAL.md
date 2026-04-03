@@ -1,151 +1,149 @@
 # Mountain Leader Dashboard Manual
 
-## 1. Purpose
-This manual is for `ML` users.
+> Audience: `ML` users  
+> Scope: event-by-event review, participant detail checks, and case study capture
 
-Mountain Leaders mainly use the dashboard for event-level operational support rather than broad management reporting.
+![ML dashboard annotated guide](images/ml-dashboard-guide.svg)
 
-ML users can access:
+## 1. Role overview
+Mountain Leaders mainly use the dashboard for delivery support rather than broad management reporting.
+
+Available views:
+
 - `ML Dashboard`
 - `Case Studies`
 
 ML users cannot access:
+
 - `Admin Dashboard`
 - `KPI Dashboard`
 - `Custom Reports Dashboard`
 - `Funder Dashboard`
 
-## 2. Signing In
-1. Open the dashboard.
-2. Enter your email address and password.
-3. Change your password if prompted.
+## 2. Quick start
+1. Sign in with your dashboard account.
+2. Use `View Mode` to switch between `ML Dashboard` and `Case Studies`.
+3. Choose the correct region and timeframe before selecting an event.
+4. Review the event panel first, then the participant details.
 
-If you cannot log in, contact an Admin.
+![Navigation and screen areas](images/dashboard-navigation.svg)
 
-## 3. Main Navigation
-Use `View Mode` in the left sidebar.
+## 3. ML Dashboard purpose
+The ML Dashboard is designed to help you work on one event at a time.
 
-Available ML views:
-- `ML Dashboard`
-- `Case Studies`
+It supports:
 
-## 4. ML Dashboard Overview
-The ML Dashboard is focused on one event at a time.
+- confirming you are looking at the correct event
+- checking event information before delivery
+- reviewing participant details where available
+- surfacing medical and emergency fields when Beacon supplies them
+- checking the raw source payload during troubleshooting
 
-It is designed to help you:
-- select an event
-- review event details
-- review participant information
-- inspect medical and emergency contact fields where available
+## 4. Filters and event selection
+Use the sidebar to set:
 
-## 5. ML Dashboard Filters
-In the sidebar:
-1. choose `All Regions` or a specific region
-2. choose a timeframe
+- `All Regions` or a specific region
+- timeframe
 
-The event list updates based on these filters.
+Then use the `Event` selector on the page to choose the event you need.
 
-## 6. Choosing an Event
-Use the `Event` selector to choose the event you want.
+If the event list is empty:
 
-The label normally includes:
-- event name
-- event date
-
-If no events appear:
-- widen the date range
+- widen the timeframe
 - switch to `All Regions`
-- confirm the event exists in Beacon
+- confirm the event has synced from Beacon
 
-## 7. Event Details
-After selecting an event, the dashboard shows an `Event Details` section.
+## 5. Event Details panel
+Once an event is selected, the dashboard shows an `Event Details` area.
 
-Typical fields may include:
+Typical fields include:
+
 - event ID
 - event name
 - date
 - region
 - event type
-- participant counts
+- participant count
 - location
 - status
 - description
 
-Use this section as your first operational check before reviewing attendees.
+Always check this panel first to confirm you are working in the right record.
 
-## 8. Participant Selection
-If attendee data is available, the dashboard shows a participant chooser.
+## 6. Participant selection and detail
+If attendee detail is available, the dashboard provides a participant chooser.
 
-You can:
-1. select a participant
-2. review the selected attendee details
+Typical workflow:
 
-Depending on the source data, the dashboard may show:
-- names
-- IDs
-- linked participant records
+1. Select the event.
+2. Open the participant selector.
+3. Choose one participant at a time.
+4. Review the available fields carefully.
 
-If attendee data is missing, the dashboard will tell you that names or IDs are not yet available.
+Possible detail sections:
 
-## 9. Participant Detail Sections
-For a selected participant, the dashboard may show:
 - `Personal Information`
 - `Medical Information`
 - `Emergency Contact Details`
 - `Participant Record`
 
-These sections depend on what exists in the Beacon source data.
+Not every attendee will have every field. Blank or missing sections usually mean Beacon did not provide that value.
 
-Important:
-- not every attendee will have every field
-- blank sections usually mean the source record does not contain those values
+## 7. Event-level medical and emergency information
+Below the participant-level sections, the dashboard may also surface event-level medical or emergency fields extracted from the event payload.
 
-## 10. Event-Level Medical and Emergency Fields
-Below participant details, the dashboard may also show event-level:
-- `Medical Information`
-- `Emergency Contact Details`
+Use these as an operational prompt, not as a substitute for normal safety procedures.
 
-These are extracted from the event payload itself when present.
+## 8. Raw Event Payload
+The `Raw Event Payload` expander is for deeper checking.
 
-## 11. Raw Event Payload
-Use the `Raw Event Payload` expander only when needed.
+Use it when:
 
-This is useful when:
-- you need to confirm how a field is stored
-- you are troubleshooting missing values
-- support staff ask for exact source details
+- a value appears to be missing from the formatted sections
+- support staff ask how Beacon stored a field
+- you need to confirm exactly what synced into the app
 
-## 12. Case Studies
-ML users can also open `Case Studies`.
+Only use this section when needed. The formatted view is easier to read for day-to-day work.
 
-You can:
-- read existing case studies
-- filter them by date and region
-- upload new case studies
+## 9. Case Studies
+ML users can also read and upload case studies.
 
-This is useful if you want to add qualitative feedback after delivery.
+This is useful after delivery when you want to capture:
 
-## 13. Best Practice for ML Users
-- filter to the right date range before selecting an event
-- check `Event Details` first
-- then review named participants one by one
-- use medical and emergency sections as a prompt to verify relevant details before delivery activity
-- report missing or incomplete attendee fields to Admins if they should exist
+- participant feedback
+- outcome stories
+- short event reflections
 
-## 14. Troubleshooting
+Suggested upload steps:
+
+1. Open `Case Studies`.
+2. Check whether the story already exists.
+3. Add a descriptive title.
+4. Paste the story text.
+5. Choose the correct date and region.
+6. Submit.
+
+## 10. Good working practice
+- set the correct date range before selecting an event
+- confirm the event details panel before reviewing participants
+- treat medical and emergency information carefully and only for operational need
+- report missing attendee data to Managers or Admins when the source record should contain it
+
+## 11. Troubleshooting
 ### No events are showing
 - widen the timeframe
 - choose `All Regions`
-- confirm the event has synced from Beacon
+- confirm the event exists in Beacon and has synced
 
 ### No participant names are shown
-- some events only sync counts or limited attendee detail
-- this depends on Beacon source structure
+- some events only sync counts or limited attendee data
+- this depends on the Beacon source structure
 
 ### Medical or emergency sections are blank
 - the source record may not contain those fields
-- not all attendees or events hold those details in Beacon
+- not all events or attendees include those values in Beacon
 
 ### The selected event looks wrong
 - check the event date in the selector
-- switch region/timeframe filters and reselect
+- adjust the region and timeframe filters
+- reselect the event after changing filters

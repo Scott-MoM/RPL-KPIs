@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f4f7f9"/>
+  <rect x="38" y="38" width="1324" height="784" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="38" y="38" width="1324" height="72" rx="24" fill="#163847"/>
+  <text x="76" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">Funder Dashboard Guide</text>
+  <rect x="70" y="134" width="286" height="650" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="94" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#163847" font-weight="700">Limited controls</text>
+  <rect x="94" y="204" width="238" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="238" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Timeframe</text>
+  <rect x="94" y="276" width="238" height="94" rx="12" fill="#fff7df" stroke="#d8c37e"/>
+  <text x="116" y="314" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#6a5716" font-weight="700">Funder is applied</text>
+  <text x="116" y="342" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#8a7427">automatically for safety.</text>
+  <rect x="390" y="134" width="940" height="650" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <text x="420" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#163847" font-weight="700">Aggregated reporting only</text>
+  <rect x="420" y="214" width="272" height="130" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="724" y="214" width="272" height="130" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="1028" y="214" width="272" height="130" rx="16" fill="#d7efe6" stroke="#8ab4a1"/>
+  <text x="448" y="268" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Bids Submitted</text>
+  <text x="752" y="268" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Total Funds Raised</text>
+  <text x="1056" y="268" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#173f2e" font-weight="700">Last Data Refresh</text>
+  <rect x="420" y="384" width="880" height="318" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="448" y="428" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Income Trend</text>
+  <text x="448" y="462" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Shows payments and grants over time for the assigned funder.</text>
+  <polyline fill="none" stroke="#2c7fb8" stroke-width="6" points="468,620 612,566 756,590 900,494 1044,528 1188,446"/>
+  <circle cx="468" cy="620" r="7" fill="#2c7fb8"/>
+  <circle cx="612" cy="566" r="7" fill="#2c7fb8"/>
+  <circle cx="756" cy="590" r="7" fill="#2c7fb8"/>
+  <circle cx="900" cy="494" r="7" fill="#2c7fb8"/>
+  <circle cx="1044" cy="528" r="7" fill="#2c7fb8"/>
+  <circle cx="1188" cy="446" r="7" fill="#2c7fb8"/>
+  <text x="448" y="504" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">No personal data or row-level operational detail is shown here.</text>
+  <line x1="332" y1="322" x2="390" y2="322" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="332" cy="322" r="8" fill="#d27b2d"/>
+  <text x="84" y="420" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Funder users only adjust timeframe.</text>
+</svg>

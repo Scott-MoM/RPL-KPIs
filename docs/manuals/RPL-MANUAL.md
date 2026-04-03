@@ -1,42 +1,45 @@
 # RPL Dashboard Manual
 
-## 1. Purpose
-This manual is for Regional Programme Leads (`RPL`) using the Regional KPI Dashboard.
+> Audience: Regional Programme Leads (`RPL`)  
+> Scope: KPI monitoring, self-service reporting, exports, and case study management
 
-As an RPL, you can:
-- view KPI summaries for your region or all regions
-- run custom reports
-- read and upload case studies
-- drill into KPI source rows
+![KPI dashboard annotated guide](images/kpi-dashboard-guide.svg)
 
-As an RPL, you cannot:
-- open the Admin Dashboard
-- use the ML Dashboard
-- see named attendee details in KPI event drill-downs
+## 1. What this manual covers
+RPL users use the dashboard to monitor delivery, review trends, validate headline numbers, and prepare evidence for internal reporting.
 
-## 2. Signing In
-1. Open the dashboard.
-2. Enter your email address and password.
-3. If the system asks you to change your password, complete that step before continuing.
+RPL access includes:
 
-If you cannot log in, use `Forgot password?` or contact an Admin.
-
-## 3. Main Navigation
-Use `View Mode` in the left sidebar.
-
-Available views for RPL:
 - `KPI Dashboard`
 - `Custom Reports Dashboard`
 - `Case Studies`
 
-## 4. Global Filters
-Most RPL pages use the left sidebar for filters.
+RPL users cannot access:
 
-Main filters:
+- `Admin Dashboard`
+- `ML Dashboard`
+- named attendee details inside KPI event drill-downs
+
+## 2. Quick start
+1. Sign in with your email address and password.
+2. Use `View Mode` in the left sidebar to choose the screen you need.
+3. Start with `All Regions` and a broad timeframe if you are not sure where data sits.
+4. Narrow the filters once you confirm the records are present.
+
+![Navigation and screen areas](images/dashboard-navigation.svg)
+
+## 3. Shared filters and navigation
+Most RPL tasks begin in the left sidebar.
+
+Main controls:
+
+- `View Mode`
 - `All Regions` or a specific region
 - `Timeframe`
+- `KPI Section` on the KPI screen
 
-Timeframe options:
+Typical timeframe options:
+
 - `All Time`
 - `Year`
 - `Quarter`
@@ -45,15 +48,17 @@ Timeframe options:
 - `Custom Range`
 
 Best practice:
-- start broad with `All Time`
-- confirm the data exists
-- then narrow to the region and period you need
 
-## 5. KPI Dashboard
-The KPI Dashboard gives headline operational figures.
+- start broad
+- confirm the data is present
+- then narrow to the reporting period you need
 
-### 5.1 KPI Section selector
-Use `KPI Section` in the sidebar to switch between:
+## 4. KPI Dashboard
+The KPI Dashboard is the fastest way to review headline figures.
+
+### 4.1 Screen tour
+Use `KPI Section` to move between:
+
 - `Governance`
 - `Partnerships`
 - `Delivery`
@@ -61,82 +66,84 @@ Use `KPI Section` in the sidebar to switch between:
 - `Comms` when region is `Global`
 - `Case Studies`
 
-### 5.2 Governance
-This section shows:
-- steering group active status
-- active volunteers
-- new volunteers
+The page title shows the active region. KPI cards update from the chosen filters.
 
-Click a metric card to open its drill-down popup.
+### 4.2 What each section is for
+`Governance`
 
-Inside the popup you can:
-- review the related rows
-- select a row for more detail
-- open `Technical View (JSON)` if needed
+- steering group and volunteer-related metrics
+- useful for oversight and governance reporting
 
-### 5.3 Partnerships
-This section shows:
-- active organisations in the selected region
-- network memberships placeholder metric
+`Partnerships`
 
-Use the organisation drill-down to inspect supporting rows.
+- active organisations and partnership-related counts
+- useful for regional relationship tracking
 
-### 5.4 Delivery
-This section shows:
+`Delivery`
+
 - events delivered
 - total participants
-- bursary participants placeholder metric
-- average wellbeing change placeholder metric
-- aggregated demographics
+- aggregated demographics and other delivery measures
 
-Important RPL limitation:
-- RPL users can see attendee totals
-- RPL users cannot see named attendee lists or IDs in the KPI event drill-down
+`Income`
 
-### 5.5 Income and Comms
-These are shown only when the region filter is `Global`.
+- available only when the region is `Global`
+- funding totals, bids submitted, partner-related measures
 
-Income includes:
-- total funds raised
-- bids submitted
-- corporate partners
-- in-kind value placeholder metric
+`Comms`
 
-Comms currently contains placeholder metrics.
+- available only when the region is `Global`
+- communications-related summary measures
 
-### 5.6 KPI Drill-Down
-When you click a KPI card:
-1. a popup opens
-2. a list of source rows appears
-3. you select a row
-4. the dashboard shows a readable record
+`Case Studies`
 
-Use this when:
-- a number looks unusually high or low
-- you need to validate which records are included
-- you need source evidence behind a KPI
+- qualitative evidence alongside KPI reporting
 
-## 6. Custom Reports Dashboard
-This is the main self-service analysis area for RPL users.
+### 4.3 Drill-down and validation
+Click any KPI card to inspect the source records behind the number.
 
-### 6.1 What you can do
-You can:
-- choose one or more datasets
-- choose an output type
-- filter by region and time
-- apply advanced report filters
-- export the results to CSV
+Typical flow:
 
-### 6.2 Datasets
+1. Click the KPI card.
+2. Review the list of supporting rows.
+3. Select a row to inspect it in readable detail.
+4. Open `Technical View (JSON)` only if you need the raw structure.
+
+Use drill-down when:
+
+- a KPI looks unexpectedly high or low
+- you need confidence before sharing a figure
+- a stakeholder asks which records are included
+
+### 4.4 Important RPL privacy limit
+In `Delivery > Total Participants`, RPL users can review totals but not named attendee details or IDs.
+
+This is intentional. If participant-level operational detail is required, ask a Manager or Admin to review it in the appropriate view.
+
+## 5. Custom Reports Dashboard
+The Custom Reports screen is the main self-service analysis workspace for RPL users.
+
+![Custom reports annotated guide](images/custom-reports-guide.svg)
+
+### 5.1 What you can do
+- combine datasets
+- build tables and charts
+- narrow by date and region
+- apply advanced filters
+- download CSV files for offline analysis
+
+### 5.2 Datasets
 Available datasets:
+
 - `People`
 - `Organisations`
 - `Events`
 - `Payments`
 - `Grants`
 
-### 6.3 Output Types
-Available report outputs:
+### 5.3 Output types
+Available outputs:
+
 - `Tabular`
 - `Bar`
 - `Line`
@@ -145,84 +152,113 @@ Available report outputs:
 - `Comparison Analysis`
 - `Distance Analysis`
 
-### 6.4 Apply filters
-The report page now uses explicit apply buttons.
+### 5.4 Standard report workflow
+1. Choose one or more datasets.
+2. Select an output type.
+3. Set region and timeframe.
+4. Click `Apply Report Filters`.
+5. Open `Advanced Report Controls` if you need extra filtering.
+6. Click `Apply Advanced Filters`.
+7. Review the results and export if needed.
 
-Use them in this order:
-1. choose your report filters
-2. click `Apply Report Filters`
-3. if needed, open `Advanced Report Controls`
-4. change advanced filters
-5. click `Apply Advanced Filters`
+If you change a filter and the report does not move immediately, that is expected until the relevant `Apply` button is clicked.
 
-If you change a filter and nothing updates yet, that is expected until you apply it.
+### 5.5 Advanced filtering
+Advanced controls can be used to limit the result set by:
 
-### 6.5 Distance Analysis
-Distance Analysis estimates participant travel to events.
+- dataset
+- category
+- status
+- metric value range
+- rows with valid dates only
 
-What it shows:
-- journey count
+This is useful for tidying large mixed reports before export.
+
+### 5.6 Distance Analysis
+Distance Analysis estimates participant travel from home postcode to the event location.
+
+It can show:
+
+- participant journey count
 - average, median, and maximum distance
 - distance bands
-- event ranking by average travel distance
-- event drill-down
-- participant-level journey detail
+- events ranked by average travel distance
+- participant-level journey rows
 
-How to use it:
-1. choose `Output Type = Distance Analysis`
-2. keep `Events` selected in datasets
-3. click `Apply Report Filters`
-4. choose event types if needed
-5. use `Drill down into event` to inspect one event
+Recommended workflow:
+
+1. Set `Output Type` to `Distance Analysis`.
+2. Keep `Events` selected in the dataset filter.
+3. Click `Apply Report Filters`.
+4. Limit to event types if needed.
+5. Decide whether to keep `Only include rows with resolved distance` turned on.
+6. Use `Drill down into event` to inspect one event in detail.
+7. Download the selected-event or full CSV when needed.
 
 Important notes:
-- the report prefers road distance when routing is configured
-- it falls back to straight-line distance when routing is unavailable
-- missing participant or event postcode data will reduce results
 
-## 7. Case Studies
-The Case Studies area lets you read and add qualitative stories.
+- road distance is used when routing is configured
+- otherwise the report falls back to straight-line miles
+- missing participant or event postcode data will reduce the available rows
 
-You can:
-- filter case studies by region and date
-- upload a new case study
+## 6. Case Studies
+Case Studies adds qualitative evidence to the numbers.
 
-To add one:
-1. open `Upload New Case Study`
-2. enter a title
-3. enter the story or testimonial
-4. choose the case study date
-5. choose the region
-6. submit
+Use it to:
 
-## 8. Exports
-CSV export is available in Custom Reports and Distance Analysis.
+- read regional stories and testimonials
+- filter by date and region
+- upload a new case study for future reporting
 
-Use exports when:
-- you need offline analysis
-- you want to circulate a report
-- you want to check rows in Excel
+Suggested workflow for uploads:
 
-## 9. Troubleshooting
+1. Open `Case Studies`.
+2. Choose `Upload New Case Study`.
+3. Add a clear title.
+4. Paste the story or testimonial.
+5. Enter the correct date.
+6. Assign the correct region.
+7. Submit and review the saved result.
+
+## 7. Typical RPL tasks
+### Check a KPI before a meeting
+1. Open `KPI Dashboard`.
+2. Choose the right section.
+3. Set the region and timeframe.
+4. Click the KPI card to validate the supporting rows.
+
+### Prepare a CSV for offline analysis
+1. Open `Custom Reports Dashboard`.
+2. Choose the relevant dataset and output type.
+3. Apply filters.
+4. Refine with advanced controls if required.
+5. Click `Download Report CSV`.
+
+### Add a case study to support a monthly update
+1. Open `Case Studies`.
+2. Filter first to avoid duplicating an existing story.
+3. Upload the new case study with a clear title and date.
+
+## 8. Troubleshooting
 ### I see no KPI data
-- check region and timeframe
+- check region and timeframe first
 - try `All Regions` and `All Time`
-- confirm you are in the right KPI section
+- confirm you are on the correct KPI section
 
 ### The report looks unchanged
 - click `Apply Report Filters`
 - click `Apply Advanced Filters` if you changed advanced controls
 
-### Distance Analysis shows nothing
-- confirm the dataset includes `Events`
-- confirm your date range contains events
-- try turning off `Only include rows with resolved distance`
+### Distance Analysis shows no rows
+- confirm `Events` is included as a dataset
+- widen the date range
+- try clearing `Only include rows with resolved distance`
 
 ### I cannot see participant names
-- that is expected for the RPL role in KPI event drill-downs
+- that is expected for the RPL role in KPI drill-downs
 
-## 10. Good Working Practice
-- use KPI sections for quick headline checks
-- use Custom Reports for analysis and exports
-- use Case Studies when you need qualitative examples alongside metrics
-- validate unusual numbers using KPI drill-down before sharing them
+## 9. Good working practice
+- use KPI cards for fast monitoring
+- use Custom Reports when you need evidence, export, or charting
+- validate unusual numbers with drill-down before circulating them
+- pair a quantitative report with a case study where possible

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f4f7f9"/>
+  <rect x="38" y="38" width="1324" height="784" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="38" y="38" width="1324" height="72" rx="24" fill="#163847"/>
+  <text x="76" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">Custom Reports Dashboard Guide</text>
+  <rect x="70" y="134" width="306" height="650" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="94" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#163847" font-weight="700">Report controls</text>
+  <rect x="94" y="204" width="258" height="84" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="238" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Datasets</text>
+  <text x="116" y="266" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">People, Organisations, Events,</text>
+  <text x="116" y="290" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Payments, Grants</text>
+  <rect x="94" y="304" width="258" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="338" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Output Type</text>
+  <rect x="94" y="372" width="258" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="406" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Region and Timeframe</text>
+  <rect x="94" y="440" width="258" height="62" rx="12" fill="#163847"/>
+  <text x="116" y="478" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#ffffff">Apply Report Filters</text>
+  <rect x="94" y="520" width="258" height="120" rx="12" fill="#fff7df" stroke="#d8c37e"/>
+  <text x="116" y="556" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#6a5716" font-weight="700">Advanced Report Controls</text>
+  <text x="116" y="586" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#8a7427">Category, status, value range,</text>
+  <text x="116" y="612" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#8a7427">and valid-date filters</text>
+  <rect x="410" y="134" width="920" height="650" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <text x="438" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#163847" font-weight="700">Report output area</text>
+  <rect x="438" y="204" width="864" height="58" rx="12" fill="#eef4f7" stroke="#c9d7dd"/>
+  <text x="462" y="240" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Rows, datasets, timeframe, and download actions appear here.</text>
+  <rect x="438" y="290" width="864" height="182" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="466" y="332" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Table or chart output</text>
+  <text x="466" y="366" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Tabular, Bar, Line, Pie, UK Map, or Comparison Analysis</text>
+  <text x="466" y="396" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">The results do not refresh until the relevant Apply button is pressed.</text>
+  <rect x="438" y="500" width="410" height="244" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="466" y="542" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Distance Analysis summary</text>
+  <text x="466" y="576" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Participant journeys</text>
+  <text x="466" y="604" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Average, median, max distance</text>
+  <text x="466" y="632" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Distance bands</text>
+  <text x="466" y="660" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Event ranking by average travel</text>
+  <rect x="874" y="500" width="428" height="244" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="902" y="542" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Selected event detail</text>
+  <text x="902" y="576" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Drill into one event to view</text>
+  <text x="902" y="604" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">participant-level journey rows</text>
+  <text x="902" y="632" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">and export a selected-event CSV.</text>
+  <line x1="352" y1="470" x2="410" y2="470" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="352" cy="470" r="8" fill="#d27b2d"/>
+  <text x="86" y="694" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Apply filters before judging the output.</text>
+</svg>

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f3f6f8"/>
+  <rect x="40" y="40" width="1320" height="780" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="40" y="40" width="1320" height="72" rx="24" fill="#163847"/>
+  <text x="78" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">Regional KPI Dashboard</text>
+  <text x="1060" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#d6e4ea">Professional screen map</text>
+  <rect x="72" y="136" width="280" height="640" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="98" y="178" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#163847" font-weight="700">Left Sidebar</text>
+  <rect x="96" y="204" width="232" height="58" rx="12" fill="#163847"/>
+  <text x="116" y="240" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#ffffff">View Mode</text>
+  <rect x="96" y="284" width="232" height="52" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Region / All Regions</text>
+  <rect x="96" y="352" width="232" height="52" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="386" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Timeframe</text>
+  <rect x="96" y="420" width="232" height="108" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="456" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Context-specific filters</text>
+  <text x="116" y="486" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">KPI Section, datasets,</text>
+  <text x="116" y="512" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">advanced controls, etc.</text>
+  <rect x="96" y="548" width="232" height="106" rx="12" fill="#d7efe6" stroke="#8ab4a1"/>
+  <text x="116" y="586" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#173f2e" font-weight="700">Last Data Refresh</text>
+  <text x="116" y="618" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#355a4c">Use this before reporting</text>
+  <text x="116" y="644" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#355a4c">to confirm recency.</text>
+  <rect x="388" y="136" width="936" height="640" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <text x="418" y="178" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#163847" font-weight="700">Main Workspace</text>
+  <rect x="420" y="206" width="874" height="88" rx="14" fill="#eef4f7" stroke="#c9d7dd"/>
+  <text x="448" y="246" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Current dashboard title, captions, and summary context</text>
+  <text x="448" y="276" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">This area changes based on View Mode and the selected role.</text>
+  <rect x="420" y="322" width="272" height="122" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="721" y="322" width="272" height="122" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="1022" y="322" width="272" height="122" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="448" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Metric cards</text>
+  <text x="448" y="402" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Clickable KPI or summary blocks</text>
+  <text x="749" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Charts or tables</text>
+  <text x="749" y="402" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Used mainly in reports and funder views</text>
+  <text x="1050" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Detail panels</text>
+  <text x="1050" y="402" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Drill-down, event, or user detail</text>
+  <rect x="420" y="476" width="874" height="256" rx="16" fill="#ffffff" stroke="#cfd8dc" stroke-dasharray="8 8"/>
+  <text x="448" y="520" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Role-based content zone</text>
+  <text x="448" y="556" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#58717d">RPL / Manager: KPI and reports</text>
+  <text x="448" y="586" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#58717d">ML: event and participant detail</text>
+  <text x="448" y="616" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#58717d">Admin: user management, sync, audit</text>
+  <text x="448" y="646" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#58717d">Funder: privacy-safe funding summary</text>
+  <line x1="352" y1="234" x2="420" y2="234" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="352" cy="234" r="8" fill="#d27b2d"/>
+  <text x="438" y="150" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Start here to move between screens.</text>
+</svg>

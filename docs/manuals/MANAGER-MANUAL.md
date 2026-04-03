@@ -1,41 +1,42 @@
 # Manager Dashboard Manual
 
-## 1. Purpose
-This manual is for `Manager` users.
+> Audience: `Manager` users  
+> Scope: operational reporting, KPI validation, event review, funder conversations, and case study evidence
 
-Managers have broad operational access and can use:
+![KPI dashboard annotated guide](images/kpi-dashboard-guide.svg)
+
+## 1. Role overview
+Managers have broad operational access across the reporting and delivery views.
+
+Available views:
+
 - `KPI Dashboard`
 - `Custom Reports Dashboard`
 - `Case Studies`
 - `Funder Dashboard`
 - `ML Dashboard`
 
-Managers cannot use:
+Managers cannot access:
+
 - `Admin Dashboard`
 
-## 2. Signing In
-1. Open the dashboard.
-2. Enter your email address and password.
-3. Change your password if prompted.
+## 2. Quick start
+1. Sign in and change your password if prompted.
+2. Use `View Mode` in the sidebar to switch between screens.
+3. Check `Last Data Refresh` before relying on figures for external reporting.
+4. Start with KPI for summary, then move to reports or ML view when you need detail.
 
-If access fails, contact an Admin.
+![Navigation and screen areas](images/dashboard-navigation.svg)
 
-## 3. Main Views
-Use `View Mode` in the left sidebar.
+## 3. Shared filters and navigation
+Across most manager workflows you will use:
 
-Manager views:
-- `KPI Dashboard`
-- `Custom Reports Dashboard`
-- `Case Studies`
-- `Funder Dashboard`
-- `ML Dashboard`
-
-## 4. Shared Filters
-Across the dashboard you will commonly use:
+- `View Mode`
 - region filters
 - timeframe filters
 
-Timeframe options vary slightly by page, but generally include:
+Typical timeframes:
+
 - `All Time`
 - `Year`
 - `Quarter`
@@ -43,11 +44,14 @@ Timeframe options vary slightly by page, but generally include:
 - `Week`
 - `Custom Range`
 
-## 5. KPI Dashboard
-The KPI Dashboard is the main operational summary page.
+Use a wide range first when investigating missing data, then narrow once you know the records are present.
 
-### 5.1 KPI sections
-Choose a section from the sidebar:
+## 4. KPI Dashboard
+The KPI screen is the main operational summary view for managers.
+
+### 4.1 KPI sections
+Use the section selector to move between:
+
 - `Governance`
 - `Partnerships`
 - `Delivery`
@@ -55,126 +59,135 @@ Choose a section from the sidebar:
 - `Comms` when region is `Global`
 - `Case Studies`
 
-### 5.2 Drill-down behaviour
-Managers can open KPI popovers and inspect source rows.
+### 4.2 Drill-down behaviour
+Managers can click KPI cards and inspect supporting rows in detail.
 
-For `Delivery > Total Participants`, Managers can view:
-- attendee names when available
-- attendee IDs when available
-- placeholder entries when only counts exist
+In `Delivery > Total Participants`, managers can see:
 
-This is broader access than RPL users have.
+- attendee names where available
+- attendee IDs where available
+- placeholder entries when only participant counts exist
 
-### 5.3 KPI Debug
-Managers can enable `Show KPI Debug` in the sidebar.
+This makes the manager role suitable for reconciling participant totals or validating delivery evidence.
 
-This shows internal count checks such as:
+### 4.3 KPI Debug
+Managers can turn on `Show KPI Debug` from the sidebar.
+
+Debug mode exposes validation counters such as:
+
 - people in region
 - volunteers
 - steering volunteers
-- event counts
-- participant counts
-- grant counts
+- events in region
+- walk events
+- participants
+- grants in region
+- bids submitted
 
-Use this when validating whether a KPI is being driven by the expected amount of source data.
+Use it when a headline figure looks wrong and you want to confirm whether the underlying dataset is the issue or the KPI logic is the issue.
 
-## 6. Custom Reports Dashboard
-Managers can use the full Custom Reports Dashboard.
+## 5. Custom Reports Dashboard
+The report builder is the best place for structured analysis and export.
 
-### 6.1 Core workflow
-1. choose datasets
-2. choose an output type
-3. select region and timeframe
-4. click `Apply Report Filters`
-5. optionally refine with `Advanced Report Controls`
-6. click `Apply Advanced Filters`
-7. export if needed
+![Custom reports annotated guide](images/custom-reports-guide.svg)
 
-### 6.2 Recommended uses
-Use Custom Reports for:
-- monthly and quarterly reporting
-- checking event activity by region
-- funding and grant reviews
-- exportable evidence packs
+### 5.1 Standard workflow
+1. Choose the relevant datasets.
+2. Select the output type.
+3. Set region and timeframe.
+4. Click `Apply Report Filters`.
+5. Refine with `Advanced Report Controls` if needed.
+6. Click `Apply Advanced Filters`.
+7. Export the resulting CSV if required.
 
-### 6.3 Distance Analysis
-Managers can use Distance Analysis to review participant travel.
+### 5.2 Strong use cases for managers
+- monthly and quarterly reporting packs
+- regional comparisons
+- grant and payment reviews
+- delivery trend reviews
+- evidence packs for leadership or trustees
 
-It includes:
-- event rankings by travel distance
-- an event drill-down selector
-- participant-level journey details
-- CSV export for all rows or a selected event
-
-Because Managers have wider event access, this is often the best place to investigate reach and travel burden across delivery.
-
-## 7. ML Dashboard
-Managers can also open the ML Dashboard.
-
-Use it when you need event-specific operational detail.
-
-The workflow is:
-1. set region and timeframe
-2. choose an event
-3. review event metadata
-4. select an attendee
-5. inspect participant details when available
-
-Available information may include:
-- event details
-- participant names and IDs
-- medical information fields
-- emergency contact fields
-- raw event payload
-
-Use this carefully because it may expose operationally sensitive attendee data.
-
-## 8. Funder Dashboard
-Managers can open the Funder Dashboard and choose a funder.
-
-This dashboard is aggregated and GDPR-safe.
+### 5.3 Distance Analysis
+Distance Analysis is especially useful for managers because it reveals reach and travel burden across delivery.
 
 Use it to:
-- view bids submitted
-- view total funds raised
-- review partnership mix
-- review delivery demographics
-- view the income trend for a selected funder
 
-Important note:
-- the funder filter affects funding metrics and income trend
-- non-funding operational metrics remain region/timeframe totals
+- rank events by average participant travel
+- inspect the participant-level journey rows for one event
+- export a selected event or the full dataset
 
-## 9. Case Studies
-Managers can:
-- read case studies
-- filter by region and date
-- upload new case studies
+If the output is empty, review postcode quality and whether resolved distance filtering is excluding rows.
 
-Use this area to support reports with qualitative evidence.
+## 6. ML Dashboard
+Managers can use the ML screen for event-level operational detail without needing Admin permissions.
 
-## 10. Good Working Practice
-- use KPI Dashboard for quick monitoring
-- use KPI Debug when a headline number looks wrong
-- use Custom Reports for exportable analysis
-- use ML Dashboard for event-level operational checking
-- use Funder Dashboard for sponsor conversations and updates
+![ML dashboard annotated guide](images/ml-dashboard-guide.svg)
 
-## 11. Troubleshooting
-### The KPI number looks wrong
+Recommended workflow:
+
+1. Set the region and timeframe.
+2. Choose the relevant event.
+3. Review the event details panel.
+4. Select a participant if attendee data exists.
+5. Review personal, medical, and emergency fields carefully.
+6. Use the raw event payload only when deeper investigation is needed.
+
+Use this screen when:
+
+- an event record needs checking
+- attendee detail needs validating
+- support staff ask for confirmation of what Beacon supplied
+
+## 7. Funder Dashboard
+Managers can open the `Funder Dashboard` and choose a funder from the selector.
+
+![Funder dashboard annotated guide](images/funder-dashboard-guide.svg)
+
+Use it for:
+
+- sponsor update meetings
+- checking funding trends
+- reviewing bid totals and funds raised
+- quality-assuring what a funder-facing user will see
+
+Important interpretation note:
+
+- funder-related financial measures follow the selected funder
+- wider operational figures remain region and timeframe based
+
+## 8. Case Studies
+Managers can read, filter, and upload case studies.
+
+This is useful when you need a narrative example to sit alongside KPI or report data.
+
+Suggested use:
+
+- add case studies after notable delivery
+- tag the right region and date
+- keep titles descriptive so other staff can find them later
+
+## 9. Recommended operating pattern
+1. Start in KPI for the headline view.
+2. Use `Show KPI Debug` if a number needs validating.
+3. Move to Custom Reports for structured analysis or export.
+4. Move to ML Dashboard when the question is event-specific.
+5. Use Funder Dashboard for sponsor-facing summaries.
+
+## 10. Troubleshooting
+### A KPI number looks wrong
 - switch on `Show KPI Debug`
-- narrow the date range
-- drill into the KPI card
+- narrow the timeframe
+- drill into the KPI card to inspect the source rows
 
 ### The report did not refresh
 - click `Apply Report Filters`
-- click `Apply Advanced Filters`
+- click `Apply Advanced Filters` if advanced controls changed
 
 ### No attendee detail is visible
-- some events only contain counts
-- attendee names depend on Beacon source data
+- some events only contain counts or partial attendee detail
+- names and IDs depend on the source Beacon payload
 
-### Funder Dashboard looks empty
+### The Funder Dashboard looks empty
 - try `All Time`
 - change the selected funder
-- confirm the selected funder actually appears in payments or grants
+- confirm the selected funder appears in grants or payments

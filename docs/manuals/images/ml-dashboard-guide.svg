@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f4f7f9"/>
+  <rect x="38" y="38" width="1324" height="784" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="38" y="38" width="1324" height="72" rx="24" fill="#163847"/>
+  <text x="76" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">ML Dashboard Guide</text>
+  <rect x="70" y="134" width="286" height="650" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="94" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#163847" font-weight="700">Sidebar</text>
+  <rect x="94" y="204" width="238" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="238" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Region / All Regions</text>
+  <rect x="94" y="272" width="238" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="306" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Timeframe</text>
+  <rect x="94" y="352" width="238" height="62" rx="12" fill="#fff7df" stroke="#d8c37e"/>
+  <text x="116" y="390" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#6a5716">Choose filters first</text>
+  <rect x="390" y="134" width="940" height="650" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <rect x="420" y="164" width="880" height="70" rx="14" fill="#eef4f7" stroke="#c9d7dd"/>
+  <text x="448" y="206" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Event selector</text>
+  <text x="650" y="206" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Pick one event after setting region and timeframe.</text>
+  <rect x="420" y="262" width="880" height="138" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="448" y="306" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Event Details</text>
+  <text x="448" y="338" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Event ID, date, region, type, status, location, participant counts</text>
+  <text x="448" y="368" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Check this panel first to confirm you are in the correct record.</text>
+  <rect x="420" y="430" width="420" height="314" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="448" y="472" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Participant selector and detail</text>
+  <text x="448" y="508" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Choose one participant where attendee data exists.</text>
+  <text x="448" y="538" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Personal information</text>
+  <text x="448" y="566" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Medical information</text>
+  <text x="448" y="594" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Emergency contact details</text>
+  <rect x="878" y="430" width="422" height="314" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="906" y="472" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Raw Event Payload</text>
+  <text x="906" y="508" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Use only when the formatted view</text>
+  <text x="906" y="536" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">does not answer the question.</text>
+  <text x="906" y="576" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Helpful for checking how Beacon</text>
+  <text x="906" y="604" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">stored a field during troubleshooting.</text>
+  <line x1="332" y1="300" x2="390" y2="300" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="332" cy="300" r="8" fill="#d27b2d"/>
+  <text x="84" y="448" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Event list updates from these filters.</text>
+</svg>

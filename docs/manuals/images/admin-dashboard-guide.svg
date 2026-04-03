@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f4f7f9"/>
+  <rect x="38" y="38" width="1324" height="784" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="38" y="38" width="1324" height="72" rx="24" fill="#163847"/>
+  <text x="76" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">Admin Dashboard Guide</text>
+  <rect x="70" y="134" width="286" height="650" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="94" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#163847" font-weight="700">Admin controls</text>
+  <rect x="94" y="206" width="238" height="58" rx="12" fill="#163847"/>
+  <text x="118" y="242" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#ffffff">View Mode</text>
+  <rect x="94" y="284" width="238" height="84" rx="12" fill="#d7efe6" stroke="#8ab4a1"/>
+  <text x="116" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#173f2e" font-weight="700">Last Data Refresh</text>
+  <text x="116" y="346" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#355a4c">Check before acting.</text>
+  <rect x="390" y="134" width="940" height="650" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <rect x="420" y="164" width="270" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="730" y="164" width="270" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="1040" y="164" width="260" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="448" y="212" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Password Reset Requests</text>
+  <text x="758" y="212" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">Create New User</text>
+  <text x="1068" y="212" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">User Actions</text>
+  <rect x="420" y="314" width="410" height="176" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="448" y="356" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Sync Performance</text>
+  <text x="448" y="390" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Last successful sync, average duration,</text>
+  <text x="448" y="418" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">fetch, transform, and upsert timing.</text>
+  <rect x="890" y="314" width="410" height="176" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="918" y="356" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Beacon API Sync</text>
+  <text x="918" y="390" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Smoke test, manual sync, stop,</text>
+  <text x="918" y="418" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">and clear stuck sync controls.</text>
+  <rect x="420" y="520" width="410" height="224" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="448" y="562" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Beacon CSV Upload</text>
+  <text x="448" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Use only when importing exported files</text>
+  <text x="448" y="624" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">instead of syncing directly from the API.</text>
+  <rect x="890" y="520" width="410" height="224" rx="16" fill="#fff7df" stroke="#d8c37e"/>
+  <text x="918" y="562" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#6a5716" font-weight="700">Audit Logs and reset actions</text>
+  <text x="918" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#8a7427">Review history before assumptions.</text>
+  <text x="918" y="624" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#8a7427">Use reset operations carefully.</text>
+  <line x1="332" y1="234" x2="390" y2="234" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="332" cy="234" r="8" fill="#d27b2d"/>
+  <text x="84" y="406" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Admins switch between every major view here.</text>
+</svg>

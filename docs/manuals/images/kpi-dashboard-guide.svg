@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <rect width="1400" height="860" fill="#f4f7f9"/>
+  <rect x="38" y="38" width="1324" height="784" rx="24" fill="#ffffff" stroke="#cfd8dc" stroke-width="2"/>
+  <rect x="38" y="38" width="1324" height="72" rx="24" fill="#163847"/>
+  <text x="76" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#ffffff" font-weight="700">KPI Dashboard Guide</text>
+  <rect x="70" y="134" width="286" height="650" rx="18" fill="#eaf1f4" stroke="#b8c8cf"/>
+  <text x="94" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#163847" font-weight="700">Sidebar controls</text>
+  <rect x="94" y="204" width="238" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="238" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">All Regions / Region</text>
+  <rect x="94" y="272" width="238" height="54" rx="12" fill="#ffffff" stroke="#8fa5af"/>
+  <text x="116" y="306" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#163847">Timeframe</text>
+  <rect x="94" y="340" width="238" height="132" rx="12" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="116" y="376" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">KPI Section</text>
+  <text x="116" y="408" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Governance</text>
+  <text x="116" y="434" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Partnerships</text>
+  <text x="116" y="460" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Delivery, Income, Comms</text>
+  <rect x="94" y="492" width="238" height="72" rx="12" fill="#fff7df" stroke="#d8c37e"/>
+  <text x="116" y="532" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#6a5716">Show KPI Debug</text>
+  <rect x="390" y="134" width="940" height="650" rx="18" fill="#fbfcfd" stroke="#d9e2e6"/>
+  <text x="420" y="176" font-family="Segoe UI, Arial, sans-serif" font-size="28" fill="#163847" font-weight="700">Region Dashboard: active region</text>
+  <rect x="420" y="202" width="224" height="38" rx="10" fill="#e1f0e7"/>
+  <text x="438" y="227" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#28563c">Live KPI Overview</text>
+  <rect x="420" y="270" width="204" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="646" y="270" width="204" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="872" y="270" width="204" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <rect x="1098" y="270" width="204" height="118" rx="16" fill="#d9ebf2" stroke="#9db9c6"/>
+  <text x="446" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">KPI card</text>
+  <text x="446" y="350" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Click to drill down</text>
+  <text x="672" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">KPI card</text>
+  <text x="898" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">KPI card</text>
+  <text x="1124" y="318" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#163847" font-weight="700">KPI card</text>
+  <rect x="420" y="422" width="416" height="320" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="448" y="462" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Drill-down list</text>
+  <line x1="448" y1="490" x2="808" y2="490" stroke="#d9e2e6" stroke-width="2"/>
+  <text x="448" y="528" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Review supporting rows behind the KPI.</text>
+  <text x="448" y="562" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Select one row for readable record detail.</text>
+  <text x="448" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Use JSON only when formatted detail is not enough.</text>
+  <rect x="862" y="422" width="440" height="320" rx="16" fill="#ffffff" stroke="#cfd8dc"/>
+  <text x="890" y="462" font-family="Segoe UI, Arial, sans-serif" font-size="24" fill="#163847" font-weight="700">Record detail panel</text>
+  <line x1="890" y1="490" x2="1270" y2="490" stroke="#d9e2e6" stroke-width="2"/>
+  <text x="890" y="528" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Readable detail appears here after a row is selected.</text>
+  <text x="890" y="562" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">Managers and Admins may see attendee names.</text>
+  <text x="890" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#58717d">RPL users see totals only in participant drill-down.</text>
+  <line x1="332" y1="406" x2="404" y2="406" stroke="#d27b2d" stroke-width="4"/>
+  <circle cx="332" cy="406" r="8" fill="#d27b2d"/>
+  <text x="80" y="610" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#d27b2d" font-weight="700">Choose the right KPI section first.</text>
+</svg>
