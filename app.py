@@ -1243,6 +1243,44 @@ def _best_user_identity_fields(rows, fallback_region="Global", fallback_name="")
     return display_name, region or fallback_region
 
 @st.cache_data(show_spinner=False, ttl=300)
+def get_assigned_funder_names(max_rows=3000):
+    funders = set()
+    if DB_TYPE == "supabase":
+        try:
+            batch_size = 1000
+            fetched = 0
+            offset = 0
+            while fetched < max_rows:
+                end_idx = min(offset + batch_size - 1, max_rows - 1)
+                rows = (
+                    DB_CLIENT.table("user_roles")
+                    .select("region")
+                    .range(offset, end_idx)
+                    .execute()
+                    .data
+                    or []
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    funder_name = _decode_funder_scope(row.get("region"))
+                    if funder_name:
+                        funders.add(funder_name)
+                fetched += len(rows)
+                if len(rows) < batch_size:
+                    break
+                offset += batch_size
+        except Exception:
+            return []
+    else:
+        db_data = load_local_json(USER_DB_FILE, {"users": []})
+        for user in db_data.get("users", []):
+            funder_name = _decode_funder_scope(user.get("region"))
+            if funder_name:
+                funders.add(funder_name)
+    return sorted(funders, key=lambda x: x.lower())
+
+@st.cache_data(show_spinner=False, ttl=300)
 def get_organisation_name_lookup(max_rows=3000):
     lookup = {}
     if DB_TYPE != "supabase":
@@ -1336,6 +1374,9 @@ def _extract_funder_name(row, org_name_lookup=None):
 def get_available_funders(max_rows=2000):
     funders = set()
     org_name_lookup = get_organisation_name_lookup()
+    for name in get_assigned_funder_names():
+        if name:
+            funders.add(name)
     if DB_TYPE == "supabase":
         try:
             pay_rows = DB_CLIENT.table("beacon_payments").select("payload").limit(max_rows).execute().data or []
@@ -4354,6 +4395,10 @@ def funder_dashboard():
     grants_all = raw_income.get("grants") or []
     org_name_lookup = get_organisation_name_lookup()
     funder_map = {}
+    for fname in get_assigned_funder_names():
+        fk = _funder_key(fname)
+        if fk and fk not in funder_map:
+            funder_map[fk] = fname
     for row in payments_all + grants_all:
         fname = _extract_funder_name(row, org_name_lookup=org_name_lookup)
         fk = _funder_key(fname)
