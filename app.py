@@ -1225,6 +1225,23 @@ def _decode_funder_scope(scope_value):
         return raw[len(FUNDER_SCOPE_PREFIX):].strip()
     return ""
 
+def _best_user_identity_fields(rows, fallback_region="Global", fallback_name=""):
+    region = fallback_region
+    display_name = fallback_name
+
+    for row in rows or []:
+        row_name = str(row.get("name") or "").strip()
+        row_region = str(row.get("region") or "").strip()
+
+        if row_name and not display_name:
+            display_name = row_name
+        if row_region.startswith(FUNDER_SCOPE_PREFIX):
+            region = row_region
+        elif row_region and (not region or region == fallback_region):
+            region = row_region
+
+    return display_name, region or fallback_region
+
 @st.cache_data(show_spinner=False, ttl=300)
 def get_organisation_name_lookup(max_rows=3000):
     lookup = {}
@@ -2266,8 +2283,11 @@ def verify_user(email, password):
                 return "user_not_found", None, None, None, None
             rows = role_resp.data
             role_names = []
-            region = rows[0].get("region", "Global")
-            display_name = rows[0].get("name") or auth_resp.user.email
+            display_name, region = _best_user_identity_fields(
+                rows,
+                fallback_region="Global",
+                fallback_name=str(auth_resp.user.email or "").strip(),
+            )
             must_change = False
             for row in rows:
                 role_name = (row.get("roles") or {}).get("name")
@@ -2275,8 +2295,6 @@ def verify_user(email, password):
                     role_names.append(role_name)
                 if row.get("must_change_password"):
                     must_change = True
-                if not display_name:
-                    display_name = row.get("name") or display_name
             dedup_roles = [r for r in dict.fromkeys(role_names)]
             if not dedup_roles:
                 dedup_roles = [role_name] if role_name else []
@@ -2517,6 +2535,14 @@ def get_all_users():
                 role_name = (r.get("roles") or {}).get("name")
                 if role_name:
                     entry["roles"].add(role_name)
+                row_name = str(r.get("name") or "").strip()
+                row_region = str(r.get("region") or "").strip()
+                if row_name and not entry.get("name"):
+                    entry["name"] = row_name
+                if row_region.startswith(FUNDER_SCOPE_PREFIX):
+                    entry["region"] = row_region
+                elif row_region and not entry.get("region"):
+                    entry["region"] = row_region
             rows = []
             for entry in users_map.values():
                 region_value = entry.get("region")
