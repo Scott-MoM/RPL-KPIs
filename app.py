@@ -432,6 +432,7 @@ DB_TYPE, DB_CLIENT = get_db_connection()
 SYNC_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 SYNC_JOBS = {}
 SYNC_JOBS_LOCK = threading.Lock()
+APP_ROLE_NAMES = ["Admin", "Manager", "RPL", "ML", "Funder"]
 
 class SyncCancelledError(Exception):
     pass
@@ -445,6 +446,18 @@ def get_admin_client():
         return create_client(url, key)
     except Exception:
         return None
+
+def ensure_supabase_roles():
+    if DB_TYPE != "supabase":
+        return
+    try:
+        existing_rows = DB_CLIENT.table("roles").select("name").execute().data or []
+        existing = {str(row.get("name") or "").strip() for row in existing_rows}
+        missing = [name for name in APP_ROLE_NAMES if name not in existing]
+        for role_name in missing:
+            DB_CLIENT.table("roles").insert({"name": role_name}).execute()
+    except Exception as e:
+        print(f"Role seed error: {e}")
 
 def _get_openrouteservice_api_key():
     if "openrouteservice" in st.secrets:
@@ -2289,9 +2302,8 @@ def init_files():
             
     # 2. SUPABASE INITIALIZATION
     elif DB_TYPE == 'supabase':
-        # No-op: auth users are managed in Supabase Auth.
-        # Roles/regions are stored in public tables.
-        pass
+        # Auth users are managed in Supabase Auth, but app roles must exist in public.roles.
+        ensure_supabase_roles()
 
 # --- AUTHENTICATION LOGIC ---
 
@@ -2388,6 +2400,7 @@ def create_user(name, email, password, roles, region):
     
     if DB_TYPE == 'supabase':
         try:
+            ensure_supabase_roles()
             admin_client = get_admin_client()
             if not admin_client:
                 st.error("Admin client not available. Check Supabase secrets.")
@@ -2450,6 +2463,7 @@ def update_user_roles(email, new_roles, audit_reason=None, audit_confirmed=False
     if not roles:
         return
     if DB_TYPE == 'supabase':
+        ensure_supabase_roles()
         admin_client = get_admin_client()
         if not admin_client:
             return
