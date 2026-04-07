@@ -12,6 +12,7 @@ from docx.shared import Inches, Pt
 ROOT = Path(__file__).resolve().parent
 MANUALS_DIR = ROOT / "docs" / "manuals"
 OUTPUT_DIR = MANUALS_DIR / "docx"
+EXTRA_MANUALS = [ROOT / "USER-GUIDE.md"]
 
 
 def ensure_styles(doc: Document) -> None:
@@ -154,6 +155,7 @@ def convert_manual(manual_path: Path) -> Path:
 
 def main() -> None:
     manual_paths = sorted(MANUALS_DIR.glob("*.md"))
+    manual_paths.extend([path for path in EXTRA_MANUALS if path.exists()])
     for manual_path in manual_paths:
         output_path = convert_manual(manual_path)
         print(output_path)
