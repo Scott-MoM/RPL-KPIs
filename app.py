@@ -4436,8 +4436,12 @@ def ml_dashboard():
     _render_section("Medical Information", medical_info, "medical")
     _render_section("Emergency Contact Details", emergency_info, "emergency")
 
-    with st.expander("Raw Event Payload"):
-        st.json(raw_event)
+    with st.expander("Additional Event Information"):
+        readable_event = _sanitize_record_for_role(raw_event)
+        if readable_event:
+            _render_readable_record(readable_event, key_prefix="ml_event_extra")
+        else:
+            st.caption("No additional event information is available.")
 
 def funder_dashboard():
     st.title("Funder Dashboard")
@@ -5025,7 +5029,18 @@ def admin_dashboard():
                             f"Smoke test passed with legacy response shape "
                             f"({smoke_result['status_code']}) in {smoke_result['response_time_ms']} ms."
                         )
-                    st.json(smoke_result)
+                    smoke_rows = [
+                        {"Check": "Status code", "Result": smoke_result.get("status_code")},
+                        {"Check": "Response time", "Result": f"{smoke_result.get('response_time_ms', 0)} ms"},
+                        {"Check": "Endpoint", "Result": smoke_result.get("endpoint")},
+                    ]
+                    smoke_shape = smoke_result.get("shape")
+                    if smoke_shape:
+                        smoke_rows.append({"Check": "Response format", "Result": smoke_shape})
+                    smoke_notes = smoke_result.get("notes")
+                    if smoke_notes:
+                        smoke_rows.append({"Check": "Notes", "Result": smoke_notes})
+                    _safe_dataframe(pd.DataFrame(smoke_rows), width="stretch", hide_index=True)
                 except Exception as e:
                     log_audit_event("Beacon Smoke Test Failed", {"source": "beacon_api", "error": str(e)})
                     st.error(f"Smoke test failed: {e}")
@@ -5508,8 +5523,6 @@ def main_dashboard():
         st.caption(f"Selected: {labels[selected_idx]}")
         selected = _sanitize_record_for_role(rows[selected_idx])
         _render_readable_record(selected, key_prefix=f"{key}_record")
-        with st.expander("Technical View (JSON)"):
-            st.json(selected, expanded=False)
         return selected
     
 
