@@ -681,6 +681,9 @@ def _format_dataframe_cell(value):
             return ""
     except Exception:
         pass
+    formatted_date = _format_display_date(value)
+    if formatted_date is not None:
+        return formatted_date
     if isinstance(value, (list, tuple, set)):
         try:
             return json.dumps(list(value), ensure_ascii=True)
@@ -697,6 +700,27 @@ def _format_dataframe_cell(value):
         except Exception:
             return str(value)
     return str(value)
+
+def _format_display_date(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, pd.Timestamp):
+        ts = value
+    elif isinstance(value, datetime):
+        ts = pd.Timestamp(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if not re.match(r"^\d{4}-\d{2}-\d{2}", text):
+            return None
+        ts = pd.to_datetime(text, errors="coerce")
+    if pd.isna(ts):
+        return None
+    try:
+        return ts.strftime("%d/%m/%Y")
+    except Exception:
+        return None
 
 def _make_arrow_compatible_df(df):
     if df is None:
@@ -4194,7 +4218,7 @@ def ml_dashboard():
         if not value:
             return "Unknown date"
         try:
-            return pd.to_datetime(value).strftime("%Y-%m-%d")
+            return _format_display_date(value) or str(value)
         except Exception:
             return str(value)
 
@@ -5222,7 +5246,7 @@ def admin_dashboard():
                     df_log = df_log[~df_log["action"].isin(["Dashboard Filter Changed", "Dashboard View Changed"])]
 
                     # Convert timestamps to readable format
-                    df_log['created_at'] = pd.to_datetime(df_log['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    df_log['created_at'] = pd.to_datetime(df_log['created_at'], errors='coerce').dt.strftime('%d/%m/%Y')
                     
                     # Client-side Search (for flexibility with JSON/Text columns)
                     if search_term:
@@ -5302,7 +5326,7 @@ def get_time_filters():
         week_end = week_start + pd.Timedelta(days=6)
         start_date = datetime.combine(week_start, datetime.min.time())
         end_date = datetime.combine(week_end, datetime.max.time())
-        st.sidebar.caption(f"Week: {week_start} to {week_end}")
+        st.sidebar.caption(f"Week: {_format_display_date(week_start) or week_start} to {_format_display_date(week_end) or week_end}")
     else:
         custom_start = st.sidebar.date_input("Start date", value=today - pd.Timedelta(days=30))
         custom_end = st.sidebar.date_input("End date", value=today)
@@ -5313,7 +5337,7 @@ def get_time_filters():
             end_date = datetime.combine(custom_end, datetime.max.time())
 
     if start_date and end_date:
-        st.sidebar.caption(f"Filtering: {start_date.date()} to {end_date.date()}")
+        st.sidebar.caption(f"Filtering: {_format_display_date(start_date) or start_date.date()} to {_format_display_date(end_date) or end_date.date()}")
     elif timeframe == "All Time":
         st.sidebar.caption("Filtering: All time")
 
