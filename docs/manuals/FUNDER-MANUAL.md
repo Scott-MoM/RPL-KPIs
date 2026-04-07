@@ -5,71 +5,93 @@
 
 ![Funder dashboard annotated guide](images/funder-dashboard-guide.svg)
 
-## 1. About this guide
-This guide explains the dashboard for funder users.
+## 1. Introduction
+This manual explains how funder users should use the dashboard.
 
-The Funder view is designed to be simple, safe, and easy to read.
+The `Funder` role is designed to provide a safe, clear summary view without exposing operational or personal detail.
 
-Available view:
+Funder users can open:
 
 - `Funder Dashboard`
+- `Data Request Form`
 
-Funder users cannot access:
+Funder users cannot open:
 
 - `Admin Dashboard`
 - `KPI Dashboard`
 - `Custom Reports Dashboard`
 - `ML Dashboard`
-- detailed operational drill-down
+- `Case Studies`
 
-## 2. What this dashboard is for
-Use this dashboard to answer questions such as:
+This role is intentionally limited. It is designed for high-level review rather than investigation.
+
+## 2. What the Funder Dashboard is for
+Use this dashboard when you want to answer questions such as:
 
 - how many bids have been submitted
-- how much money has been raised
-- what the funding trend looks like over time
-- when the dashboard was last refreshed
+- how much funding has been raised
+- how funding is changing over time
+- whether the dashboard has refreshed recently enough to rely on
 
-Your funder access is applied automatically so the page opens in a safe filtered state.
+This view is designed to be readable, safe, and appropriate for restricted or external-facing use.
 
-## 3. Signing in
-1. Open the dashboard link.
-2. Enter your email address and password.
-3. Change your password if the system asks you to do so.
-4. Check the timeframe and `Last Data Refresh` before using the figures in a report or meeting.
+## 3. Signing in and first checks
+When you sign in:
 
-## 4. Privacy and access
-The Funder Dashboard is intentionally limited.
+1. Enter your email address and password.
+2. Change your password if prompted.
+3. Confirm the timeframe you want to review.
+4. Check `Last Data Refresh` before using the figures.
 
-It shows:
+The refresh time matters. A number may be correct but still not current enough for your meeting or report.
 
-- totals
-- summary counts
-- grouped financial information
-- trend views
+## 4. What you will see
+The `Funder Dashboard` usually includes:
 
-It does not show:
+- summary metric cards
+- bid totals
+- funding totals
+- a trend view over time
+- a refresh timestamp
+
+It does not include:
 
 - personal data
-- named participants
-- attendee-level records
-- operational records behind the totals
+- participant-level records
+- detailed event records
+- operational drill-down
+- custom reporting tools
 
-If you need something more detailed, ask the organisation for a managed report.
+If you need more detail than this view provides, request a managed report from the organisation rather than expecting to find that detail in the dashboard.
 
-## 5. Filters
+## 5. Privacy and access
+The `Funder` role is intentionally restricted.
+
+This usually means:
+
+- region is fixed to a high-level context such as `Global`
+- operational screens are hidden
+- personal data is never shown
+
+These limits are not an error. They are part of how the role is designed.
+
+## 6. Filters
 Funder users have limited controls by design.
 
-You can:
+### 6.1 What you can change
+You can usually change:
 
-- change the timeframe
+- timeframe
 
-You cannot:
+### 6.2 What you cannot change
+You normally cannot change:
 
-- change the region, because it is fixed to `Global`
-- open the wider operational views
+- region
+- user settings
+- operational access
+- detailed report structure
 
-Typical timeframe options:
+Typical timeframe options include:
 
 - `All Time`
 - `Year`
@@ -77,65 +99,112 @@ Typical timeframe options:
 - `Month`
 - `Custom Range`
 
-## 6. Reading the dashboard
-### Headline cards
+## 7. Reading the dashboard
+### 7.1 Headline cards
 The top cards usually show:
 
 - `Bids Submitted`
 - `Total Funds Raised`
 
-These figures update when you change the timeframe.
+Use these cards when you need a quick factual statement such as:
 
-### Income trend
-The trend area helps you see how funding has changed over time.
+- how many bids were submitted in the selected period
+- how much funding was raised in the selected period
 
-Use it to spot:
+Always check the timeframe before quoting either value.
 
-- busy periods
-- quiet periods
-- whether activity is steady or uneven
+### 7.2 Trend view
+The trend view helps you understand whether activity is:
 
-### Last Data Refresh
-Always check the refresh time before using the figures in external reporting.
+- steady
+- seasonal
+- concentrated in particular periods
 
-If the date looks too old, ask the dashboard administrator to review it.
+Use it to compare a recent period with a wider one. For example, look at `All Time` first, then narrow to `Year` or `Quarter`.
 
-## 7. Common tasks
-### Prepare for a review meeting
+### 7.3 Last Data Refresh
+Always check the refresh time before using the dashboard in:
+
+- a report
+- a review meeting
+- a funder update
+- a presentation
+
+If the refresh date looks too old, contact the dashboard administrator rather than relying on stale figures.
+
+## 8. Step-by-step workflows
+### 8.1 Prepare for a review meeting
 1. Open the dashboard.
-2. Choose the reporting period.
+2. Set the timeframe for the period you care about.
 3. Review `Bids Submitted`.
 4. Review `Total Funds Raised`.
-5. Review the income trend.
+5. Review the trend view.
 6. Check `Last Data Refresh`.
+7. Note the figures only after confirming the timeframe and refresh point.
 
-### Compare a recent period with a wider period
+### 8.2 Compare recent activity with a wider period
 1. Start with `All Time`.
-2. Review the overall trend.
+2. Review the overall pattern.
 3. Narrow to `Year`, `Quarter`, or `Month`.
-4. Compare the change in the headline figures.
+4. Compare how the cards change.
+5. Compare how the trend shape changes.
 
-## 8. What funder users cannot do
+### 8.3 Check whether figures are current enough to use
+1. Open the dashboard.
+2. Look at `Last Data Refresh`.
+3. Decide whether that refresh point is suitable for your meeting, report, or update.
+4. If not, contact the dashboard administrator.
+
+## 9. Data Request Form
+Funder users can also open `Data Request Form`.
+
+Use it when:
+
+- you need a more formal data request
+- you need to explain why additional information is being requested
+- you want the request reviewed by the operational team
+
+All fields are required:
+
+- `Name`
+- `Email`
+- `Date`
+- `Time`
+- `Reason for data request`
+
+When you submit a request, `Admin` and `Manager` users are notified in the dashboard.
+
+## 10. What this role cannot do
 Funder users cannot:
 
-- switch to the other dashboard views
+- switch to operational dashboards
 - inspect personal records
-- access participant details
 - run custom reports
+- review event-level participant detail
 - manage users
 - run sync actions
 
-These limits are intentional.
+These limits are intentional and support privacy-safe reporting.
 
-## 9. Troubleshooting
+## 11. Good working practice
+- check the timeframe before quoting any number
+- check the refresh date before sharing any figure
+- use the dashboard for summary reporting, not detailed investigation
+- request a managed report if you need more context
+- use the Data Request Form when you need formal review of an additional request
+
+## 12. Troubleshooting
 ### I cannot see any data
-- widen the timeframe
-- check whether your assigned funder has records in that period
+1. Widen the timeframe.
+2. Check whether the assigned funder context has activity in that period.
+3. If the screen still appears empty, contact the dashboard administrator.
 
 ### The figures look old
-- check `Last Data Refresh`
-- contact the dashboard administrator if the refresh time looks too old
+1. Check `Last Data Refresh`.
+2. If it looks too old for your needs, contact the dashboard administrator.
 
 ### I need participant-level evidence
-- that is not available in the Funder role
-- ask the organisation for a managed report instead
+That is not available in the `Funder` role. Request a managed report from the organisation instead.
+
+### I expected to see another dashboard screen
+The `Funder` role includes only the `Funder Dashboard`. This is expected behaviour.

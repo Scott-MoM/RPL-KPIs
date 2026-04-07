@@ -20,6 +20,8 @@ from supabase import create_client, Client
 # --- CONFIGURATION ---
 USER_DB_FILE = 'usersAuth.json'
 CASE_STUDIES_FILE = 'case_studies.json'
+DATA_REQUESTS_FILE = 'data_requests.json'
+TEMP_ACCESS_FILE = 'temp_access_grants.json'
 REGION_OPTIONS = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
 
 st.set_page_config(page_title="Regional KPI Dashboard", layout="wide")
@@ -2311,6 +2313,10 @@ def init_files():
     if DB_TYPE == 'local':
         if not os.path.exists(CASE_STUDIES_FILE):
             save_local_json(CASE_STUDIES_FILE, [])
+        if not os.path.exists(DATA_REQUESTS_FILE):
+            save_local_json(DATA_REQUESTS_FILE, [])
+        if not os.path.exists(TEMP_ACCESS_FILE):
+            save_local_json(TEMP_ACCESS_FILE, [])
         if not os.path.exists(USER_DB_FILE):
             default_db = {
                 "users": [
@@ -2378,6 +2384,7 @@ def verify_user(email, password):
                 dedup_roles = [role_name] if role_name else []
             if not dedup_roles:
                 dedup_roles = ["RPL"]
+            dedup_roles = _effective_roles_with_temp_access(email, dedup_roles)
             primary_role = _primary_role_from_list(dedup_roles) or dedup_roles[0]
             return "success", primary_role, region, display_name, must_change, dedup_roles
         except Exception as e:
@@ -2401,6 +2408,7 @@ def verify_user(email, password):
                         db_data["users"] = users_list
                         save_local_json(USER_DB_FILE, db_data)
                         roles = _local_roles(user)
+                        roles = _effective_roles_with_temp_access(email, roles)
                         primary_role = _primary_role_from_list(roles) or user.get('role')
                         return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
                     return "wrong_password", None, None, None, None
@@ -2408,6 +2416,7 @@ def verify_user(email, password):
                 try:
                     if pbkdf2_sha256.verify(password, stored_pw):
                         roles = _local_roles(user)
+                        roles = _effective_roles_with_temp_access(email, roles)
                         primary_role = _primary_role_from_list(roles) or user.get('role')
                         return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
                 except ValueError:
@@ -2705,6 +2714,250 @@ def get_all_users():
                     row["region"] = _decode_funder_scope(row.get("region")) or row.get("region")
                 out.append(row)
             return out
+
+def _parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+    except Exception:
+        return None
+
+def _temp_grant_display_status(grant):
+    status = str((grant or {}).get("status") or "Active")
+    expires_at = _parse_iso_datetime((grant or {}).get("expires_at"))
+    if status == "Active" and expires_at and expires_at <= datetime.now(UTC):
+        return "Expired"
+    return status
+
+@st.cache_data(show_spinner=False, ttl=120)
+def get_data_requests(limit=200):
+    rows = []
+    if DB_TYPE == 'supabase':
+        try:
+            response = (
+                DB_CLIENT.table("data_requests")
+                .select("*")
+                .order("submitted_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            rows = response.data or []
+        except Exception:
+            rows = load_local_json(DATA_REQUESTS_FILE, [])
+    else:
+        rows = load_local_json(DATA_REQUESTS_FILE, [])
+
+    rows = rows[:limit]
+    rows.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+    return rows
+
+def add_data_request(request_name, request_email, requested_for_dt, reason, submitted_by_name, submitted_by_email):
+    submitted_at = datetime.now(UTC)
+    payload = {
+        "id": str(uuid.uuid4()),
+        "request_name": str(request_name or "").strip(),
+        "request_email": str(request_email or "").strip().lower(),
+        "requested_for_at": requested_for_dt.astimezone(UTC).isoformat() if requested_for_dt.tzinfo else requested_for_dt.replace(tzinfo=UTC).isoformat(),
+        "reason": str(reason or "").strip(),
+        "status": "Pending",
+        "submitted_by_name": str(submitted_by_name or "").strip(),
+        "submitted_by_email": str(submitted_by_email or "").strip().lower(),
+        "submitted_at": submitted_at.isoformat(),
+        "reviewed_by_email": "",
+        "reviewed_at": "",
+    }
+
+    if DB_TYPE == 'supabase':
+        try:
+            DB_CLIENT.table("data_requests").insert(payload).execute()
+        except Exception:
+            rows = load_local_json(DATA_REQUESTS_FILE, [])
+            rows.append(payload)
+            save_local_json(DATA_REQUESTS_FILE, rows)
+    else:
+        rows = load_local_json(DATA_REQUESTS_FILE, [])
+        rows.append(payload)
+        save_local_json(DATA_REQUESTS_FILE, rows)
+
+    log_audit_event(
+        "Data Request Submitted",
+        {
+            "request_id": payload["id"],
+            "request_email": payload["request_email"],
+            "requested_for_at": payload["requested_for_at"],
+            "notification_roles": ["Admin", "Manager"],
+        },
+    )
+    try:
+        get_data_requests.clear()
+    except Exception:
+        pass
+
+def update_data_request_status(request_id, new_status, reviewed_by_email):
+    reviewed_at = datetime.now(UTC).isoformat()
+    if DB_TYPE == 'supabase':
+        try:
+            DB_CLIENT.table("data_requests").update(
+                {
+                    "status": new_status,
+                    "reviewed_by_email": str(reviewed_by_email or "").strip().lower(),
+                    "reviewed_at": reviewed_at,
+                }
+            ).eq("id", request_id).execute()
+        except Exception:
+            rows = load_local_json(DATA_REQUESTS_FILE, [])
+            for row in rows:
+                if str(row.get("id")) == str(request_id):
+                    row["status"] = new_status
+                    row["reviewed_by_email"] = str(reviewed_by_email or "").strip().lower()
+                    row["reviewed_at"] = reviewed_at
+                    break
+            save_local_json(DATA_REQUESTS_FILE, rows)
+    else:
+        rows = load_local_json(DATA_REQUESTS_FILE, [])
+        for row in rows:
+            if str(row.get("id")) == str(request_id):
+                row["status"] = new_status
+                row["reviewed_by_email"] = str(reviewed_by_email or "").strip().lower()
+                row["reviewed_at"] = reviewed_at
+                break
+        save_local_json(DATA_REQUESTS_FILE, rows)
+
+    log_audit_event(
+        "Data Request Status Updated",
+        {
+            "request_id": request_id,
+            "status": new_status,
+            "reviewed_by_email": str(reviewed_by_email or "").strip().lower(),
+        },
+    )
+    try:
+        get_data_requests.clear()
+    except Exception:
+        pass
+
+@st.cache_data(show_spinner=False, ttl=120)
+def get_temp_access_grants(active_only=False, target_email=None, limit=200):
+    rows = []
+    if DB_TYPE == 'supabase':
+        try:
+            query = DB_CLIENT.table("temp_access_grants").select("*").order("granted_at", desc=True).limit(limit)
+            if target_email:
+                query = query.eq("target_email", str(target_email).strip().lower())
+            response = query.execute()
+            rows = response.data or []
+        except Exception:
+            rows = load_local_json(TEMP_ACCESS_FILE, [])
+    else:
+        rows = load_local_json(TEMP_ACCESS_FILE, [])
+
+    if target_email:
+        target = str(target_email).strip().lower()
+        rows = [r for r in rows if str(r.get("target_email") or "").strip().lower() == target]
+
+    if active_only:
+        now_utc = datetime.now(UTC)
+        rows = [
+            r for r in rows
+            if _temp_grant_display_status(r) == "Active"
+            and (_parse_iso_datetime(r.get("expires_at")) or now_utc) > now_utc
+        ]
+
+    rows.sort(key=lambda x: str(x.get("granted_at") or ""), reverse=True)
+    return rows[:limit]
+
+def add_temp_access_grant(target_name, target_email, temp_roles, expires_at, reason, granted_by_email):
+    temp_roles = [r for r in dict.fromkeys([str(r).strip() for r in (temp_roles or []) if r])]
+    if not temp_roles:
+        raise ValueError("At least one temporary role is required.")
+
+    payload = {
+        "id": str(uuid.uuid4()),
+        "target_name": str(target_name or "").strip(),
+        "target_email": str(target_email or "").strip().lower(),
+        "temp_roles": temp_roles,
+        "expires_at": expires_at.astimezone(UTC).isoformat() if expires_at.tzinfo else expires_at.replace(tzinfo=UTC).isoformat(),
+        "reason": str(reason or "").strip(),
+        "granted_by_email": str(granted_by_email or "").strip().lower(),
+        "granted_at": datetime.now(UTC).isoformat(),
+        "status": "Active",
+    }
+
+    if DB_TYPE == 'supabase':
+        try:
+            DB_CLIENT.table("temp_access_grants").insert(payload).execute()
+        except Exception:
+            rows = load_local_json(TEMP_ACCESS_FILE, [])
+            rows.append(payload)
+            save_local_json(TEMP_ACCESS_FILE, rows)
+    else:
+        rows = load_local_json(TEMP_ACCESS_FILE, [])
+        rows.append(payload)
+        save_local_json(TEMP_ACCESS_FILE, rows)
+
+    log_audit_event(
+        "Temporary Access Granted",
+        {
+            "target_email": payload["target_email"],
+            "temp_roles": temp_roles,
+            "expires_at": payload["expires_at"],
+            "reason": payload["reason"],
+        },
+    )
+    try:
+        get_temp_access_grants.clear()
+    except Exception:
+        pass
+
+def update_temp_access_status(grant_id, new_status, reviewed_by_email):
+    payload = {
+        "status": new_status,
+        "reviewed_by_email": str(reviewed_by_email or "").strip().lower(),
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    if DB_TYPE == 'supabase':
+        try:
+            DB_CLIENT.table("temp_access_grants").update(payload).eq("id", grant_id).execute()
+        except Exception:
+            rows = load_local_json(TEMP_ACCESS_FILE, [])
+            for row in rows:
+                if str(row.get("id")) == str(grant_id):
+                    row.update(payload)
+                    break
+            save_local_json(TEMP_ACCESS_FILE, rows)
+    else:
+        rows = load_local_json(TEMP_ACCESS_FILE, [])
+        for row in rows:
+            if str(row.get("id")) == str(grant_id):
+                row.update(payload)
+                break
+        save_local_json(TEMP_ACCESS_FILE, rows)
+
+    log_audit_event(
+        "Temporary Access Status Updated",
+        {"grant_id": grant_id, "status": new_status, "reviewed_by_email": str(reviewed_by_email or "").strip().lower()},
+    )
+    try:
+        get_temp_access_grants.clear()
+    except Exception:
+        pass
+
+def _effective_roles_with_temp_access(email, base_roles):
+    roles = [r for r in dict.fromkeys([str(r).strip() for r in (base_roles or []) if r])]
+    target = str(email or "").strip().lower()
+    if not target:
+        return roles
+    active_grants = get_temp_access_grants(active_only=True, target_email=target)
+    for grant in active_grants:
+        for role_name in grant.get("temp_roles") or []:
+            normalized = str(role_name or "").strip()
+            if normalized and normalized not in roles:
+                roles.append(normalized)
+    return roles
 
 def get_user_roles(email):
     if not email:
@@ -5356,6 +5609,21 @@ def get_time_filters():
 
 def main_dashboard():
     # Sidebar Info
+    current_email = str(st.session_state.get("email") or "").strip().lower()
+    if current_email:
+        base_roles = get_user_roles(current_email) or _session_roles()
+        effective_roles = _effective_roles_with_temp_access(current_email, base_roles)
+        if effective_roles:
+            st.session_state["roles"] = effective_roles
+            st.session_state["role"] = _primary_role_from_list(effective_roles) or effective_roles[0]
+
+    current_name = str(st.session_state.get("name") or "").strip()
+    if ("@" in current_name or not current_name) and current_email:
+        for user in get_all_users():
+            if str(user.get("email") or "").strip().lower() == current_email and str(user.get("name") or "").strip():
+                st.session_state["name"] = str(user.get("name")).strip()
+                break
+
     hour = datetime.now().hour
     if hour < 12:
         greeting = "Good morning"
@@ -5365,6 +5633,13 @@ def main_dashboard():
         greeting = "Good evening"
     st.sidebar.title(f"{greeting}, {st.session_state['name']}")
     st.sidebar.info(f"Role: {st.session_state['role']}")
+    active_temp_grants = get_temp_access_grants(active_only=True, target_email=st.session_state.get("email"))
+    if active_temp_grants:
+        active_roles = []
+        for grant in active_temp_grants:
+            active_roles.extend(grant.get("temp_roles") or [])
+        active_roles = [r for r in dict.fromkeys(active_roles)]
+        st.sidebar.success(f"Temporary access active: {', '.join(active_roles)}")
     
     # --- REGION FILTER ---
     st.sidebar.markdown("### Region Filter")
@@ -6163,6 +6438,229 @@ def case_studies_page(allow_upload=True, start_date=None, end_date=None, region_
         st.write("No case studies found.")
     st.markdown("</div>", unsafe_allow_html=True)
 
+def render_data_request_notice():
+    roles = _session_roles()
+    if not any(r in ["Admin", "Manager"] for r in roles):
+        return
+    requests = get_data_requests(limit=500)
+    pending_count = sum(1 for row in requests if str(row.get("status") or "Pending") == "Pending")
+    if pending_count:
+        st.sidebar.warning(f"{pending_count} pending data request(s). Open `Data Request Form` to review.")
+
+def data_request_page():
+    st.header("Data Request Form")
+    st.caption("Submit a formal request for access to data. All fields are required.")
+
+    all_users = get_all_users()
+    user_map = {}
+    for user in all_users:
+        email = str(user.get("email") or "").strip().lower()
+        if not email:
+            continue
+        user_map[email] = {
+            "name": str(user.get("name") or email).strip() or email,
+            "email": email,
+            "role": str(user.get("role") or "").strip(),
+        }
+    if not user_map:
+        current_email = str(st.session_state.get("email") or "").strip().lower()
+        user_map[current_email] = {
+            "name": str(st.session_state.get("name") or current_email).strip() or current_email,
+            "email": current_email,
+            "role": str(st.session_state.get("role") or "").strip(),
+        }
+
+    user_options = sorted(user_map.keys(), key=lambda x: ((user_map.get(x) or {}).get("name", "").lower(), x))
+    default_email = str(st.session_state.get("email") or "").strip().lower()
+    if default_email not in user_options and user_options:
+        default_email = user_options[0]
+    if "data_request_name_select" not in st.session_state:
+        st.session_state["data_request_name_select"] = default_email
+    if "data_request_email_select" not in st.session_state:
+        st.session_state["data_request_email_select"] = default_email
+
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    with st.form("data_request_form"):
+        c1, c2 = st.columns(2)
+        selected_name_email = c1.selectbox(
+            "Name",
+            user_options,
+            index=user_options.index(st.session_state.get("data_request_name_select")) if st.session_state.get("data_request_name_select") in user_options else 0,
+            format_func=lambda email: (user_map.get(email) or {}).get("name", email),
+            key="data_request_name_select",
+        )
+        selected_email = c2.selectbox(
+            "Email",
+            user_options,
+            index=user_options.index(st.session_state.get("data_request_email_select")) if st.session_state.get("data_request_email_select") in user_options else 0,
+            format_func=lambda email: email,
+            key="data_request_email_select",
+        )
+        c3, c4 = st.columns(2)
+        req_date = c3.date_input("Date", value=datetime.now().date())
+        req_time = c4.time_input("Time", value=datetime.now().time().replace(second=0, microsecond=0))
+        reason = st.text_area("Reason for data request", height=140, placeholder="Explain why you need the data and what access is required.")
+        submitted = st.form_submit_button("Submit Data Request")
+
+        if submitted:
+            final_email = str(selected_email or "").strip().lower()
+            final_name = str((user_map.get(selected_name_email) or {}).get("name") or "").strip()
+            if not final_name or not final_email or not req_date or not req_time or not reason.strip():
+                st.error("Please complete all required fields.")
+            elif selected_name_email != selected_email:
+                st.error("Name and email must refer to the same user.")
+            else:
+                requested_for_dt = datetime.combine(req_date, req_time)
+                add_data_request(
+                    request_name=final_name,
+                    request_email=final_email,
+                    requested_for_dt=requested_for_dt,
+                    reason=reason.strip(),
+                    submitted_by_name=str(st.session_state.get("name") or final_name).strip(),
+                    submitted_by_email=str(st.session_state.get("email") or final_email).strip().lower(),
+                )
+                st.success("Data request submitted. Admin and Manager users have been notified in the dashboard.")
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    current_email = str(st.session_state.get("email") or "").strip().lower()
+    my_requests = [r for r in get_data_requests(limit=200) if str(r.get("submitted_by_email") or "").strip().lower() == current_email]
+    if my_requests:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.subheader("Your Recent Data Requests")
+        my_df = pd.DataFrame([
+            {
+                "Requested For": row.get("request_name"),
+                "Email": row.get("request_email"),
+                "Needed At": row.get("requested_for_at"),
+                "Status": row.get("status"),
+                "Submitted": row.get("submitted_at"),
+                "Reason": row.get("reason"),
+            }
+            for row in my_requests[:10]
+        ])
+        st.dataframe(my_df, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    roles = _session_roles()
+    if any(r in ["Admin", "Manager"] for r in roles):
+        requests = get_data_requests(limit=500)
+        pending_count = sum(1 for row in requests if str(row.get("status") or "") == "Pending")
+        review_count = sum(1 for row in requests if str(row.get("status") or "") == "In Review")
+        completed_count = sum(1 for row in requests if str(row.get("status") or "") == "Completed")
+
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.subheader("Submitted Requests")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Pending", pending_count)
+        m2.metric("In Review", review_count)
+        m3.metric("Completed", completed_count)
+        if requests:
+            review_df = pd.DataFrame([
+                {
+                    "Requested For": row.get("request_name"),
+                    "Email": row.get("request_email"),
+                    "Needed At": row.get("requested_for_at"),
+                    "Status": row.get("status"),
+                    "Submitted By": row.get("submitted_by_name"),
+                    "Submitted": row.get("submitted_at"),
+                    "Reason": row.get("reason"),
+                }
+                for row in requests[:25]
+            ])
+            st.dataframe(review_df, use_container_width=True, hide_index=True)
+
+            options = {
+                f"{row.get('request_name')} | {row.get('request_email')} | {row.get('status')} | {row.get('requested_for_at')}": row
+                for row in requests
+            }
+            selected_label = st.selectbox("Select request to review", list(options.keys()), key="data_request_review_select")
+            selected_request = options.get(selected_label)
+            if selected_request:
+                st.markdown(
+                    f"**Reason**: {selected_request.get('reason', '')}<br>"
+                    f"**Submitted by**: {selected_request.get('submitted_by_name', '')} ({selected_request.get('submitted_by_email', '')})",
+                    unsafe_allow_html=True,
+                )
+                c5, c6 = st.columns(2)
+                new_status = c5.selectbox(
+                    "Update request status",
+                    ["Pending", "In Review", "Completed"],
+                    index=["Pending", "In Review", "Completed"].index(str(selected_request.get("status") or "Pending")) if str(selected_request.get("status") or "Pending") in ["Pending", "In Review", "Completed"] else 0,
+                    key="data_request_status_select",
+                )
+                if c6.button("Save Request Status", key="data_request_status_save"):
+                    update_data_request_status(selected_request.get("id"), new_status, st.session_state.get("email"))
+                    st.success("Request status updated.")
+                    st.rerun()
+        else:
+            st.info("No data requests submitted yet.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if "Admin" in roles:
+            grants = get_temp_access_grants(limit=200)
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("Temporary Access Permissions")
+            st.caption("Grant temporary role access to a single user with an expiry time.")
+            with st.form("temp_access_form"):
+                grant_target = st.selectbox(
+                    "User",
+                    user_options,
+                    format_func=lambda email: f"{(user_map.get(email) or {}).get('name', email)} | {email}",
+                    key="temp_access_target_email",
+                )
+                grant_roles = st.multiselect("Temporary Roles", ["RPL", "ML", "Manager", "Admin"], key="temp_access_roles")
+                g1, g2 = st.columns(2)
+                expiry_date = g1.date_input("Expiry Date", value=datetime.now().date(), key="temp_access_expiry_date")
+                expiry_time = g2.time_input("Expiry Time", value=datetime.now().time().replace(second=0, microsecond=0), key="temp_access_expiry_time")
+                grant_reason = st.text_area("Reason for temporary access", height=120, key="temp_access_reason")
+                grant_submitted = st.form_submit_button("Grant Temporary Access")
+                if grant_submitted:
+                    expiry_dt = datetime.combine(expiry_date, expiry_time)
+                    if not grant_target or not grant_roles or not grant_reason.strip():
+                        st.error("Please complete all temporary access fields.")
+                    elif expiry_dt <= datetime.now():
+                        st.error("Expiry must be in the future.")
+                    else:
+                        add_temp_access_grant(
+                            target_name=(user_map.get(grant_target) or {}).get("name", grant_target),
+                            target_email=grant_target,
+                            temp_roles=grant_roles,
+                            expires_at=expiry_dt,
+                            reason=grant_reason.strip(),
+                            granted_by_email=st.session_state.get("email"),
+                        )
+                        st.success("Temporary access granted.")
+                        st.rerun()
+
+            if grants:
+                active_df = pd.DataFrame([
+                    {
+                        "User": row.get("target_name"),
+                        "Email": row.get("target_email"),
+                        "Temp Roles": ", ".join(row.get("temp_roles") or []),
+                        "Expires": row.get("expires_at"),
+                        "Status": _temp_grant_display_status(row),
+                        "Reason": row.get("reason"),
+                    }
+                    for row in grants[:20]
+                ])
+                st.dataframe(active_df, use_container_width=True, hide_index=True)
+                active_options = {
+                    f"{row.get('target_name')} | {row.get('target_email')} | {_temp_grant_display_status(row)} | {row.get('expires_at')}": row
+                    for row in grants
+                }
+                selected_grant_label = st.selectbox("Select temporary access grant", list(active_options.keys()), key="temp_access_review_select")
+                selected_grant = active_options.get(selected_grant_label)
+                if selected_grant:
+                    if st.button("Revoke Temporary Access", key="temp_access_revoke"):
+                        update_temp_access_status(selected_grant.get("id"), "Revoked", st.session_state.get("email"))
+                        st.success("Temporary access revoked.")
+                        st.rerun()
+            else:
+                st.info("No temporary access grants found.")
+            st.markdown("</div>", unsafe_allow_html=True)
+
 def _normalize_email_list(values):
     if not values:
         return []
@@ -6862,11 +7360,13 @@ def main():
                 "<div class='refresh-card refresh-red'>Last Data Refresh: Unknown<br><strong>Data refresh needed</strong></div>",
                 unsafe_allow_html=True
             )
+
+        render_data_request_notice()
             
         role = st.session_state.get('role')
         current_view = None
         if role == 'Admin':
-            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard", "ML Dashboard"])
+            view = st.sidebar.radio("View Mode", ["Admin Dashboard", "KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Data Request Form", "Funder Dashboard", "ML Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "Admin Dashboard":
@@ -6875,6 +7375,8 @@ def main():
                 main_dashboard()
             elif view == "Custom Reports Dashboard":
                 custom_reports_dashboard()
+            elif view == "Data Request Form":
+                data_request_page()
             elif view == "Funder Dashboard":
                 funder_dashboard()
             elif view == "ML Dashboard":
@@ -6883,13 +7385,15 @@ def main():
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Manager':
-            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Funder Dashboard", "ML Dashboard"])
+            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Data Request Form", "Funder Dashboard", "ML Dashboard"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
             elif view == "Custom Reports Dashboard":
                 custom_reports_dashboard()
+            elif view == "Data Request Form":
+                data_request_page()
             elif view == "Funder Dashboard":
                 funder_dashboard()
             elif view == "ML Dashboard":
@@ -6898,27 +7402,34 @@ def main():
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'ML':
-            view = st.sidebar.radio("View Mode", ["ML Dashboard", "Case Studies"])
+            view = st.sidebar.radio("View Mode", ["ML Dashboard", "Case Studies", "Data Request Form"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "ML Dashboard":
                 ml_dashboard()
+            elif view == "Data Request Form":
+                data_request_page()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
         elif role == 'Funder':
-            view = st.sidebar.radio("View Mode", ["Funder Dashboard"])
+            view = st.sidebar.radio("View Mode", ["Funder Dashboard", "Data Request Form"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
-            funder_dashboard()
+            if view == "Funder Dashboard":
+                funder_dashboard()
+            else:
+                data_request_page()
         else:
-            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies"])
+            view = st.sidebar.radio("View Mode", ["KPI Dashboard", "Custom Reports Dashboard", "Case Studies", "Data Request Form"])
             current_view = view
             log_audit_state_change("view_mode", "Dashboard View Changed", {"view": view, "role": role})
             if view == "KPI Dashboard":
                 main_dashboard()
             elif view == "Custom Reports Dashboard":
                 custom_reports_dashboard()
+            elif view == "Data Request Form":
+                data_request_page()
             else:
                 timeframe, start_date, end_date = get_time_filters()
                 case_studies_page(allow_upload=True, start_date=start_date, end_date=end_date)
