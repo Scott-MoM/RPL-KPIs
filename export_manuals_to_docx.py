@@ -4,9 +4,12 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.enum.text import WD_BREAK, WD_PARAGRAPH_ALIGNMENT
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
 from docx.shared import Inches, Pt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +35,101 @@ def ensure_styles(doc: Document) -> None:
         style.base_style = styles["List Number"]
         style.font.name = "Aptos"
         style.font.size = Pt(11)
+
+
+def extract_title_and_subtitle(lines: list[str]) -> tuple[str, str | None]:
+    title = "Dashboard Manual"
+    subtitle = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            title = stripped[2:].strip() or title
+            for follow in lines[idx + 1:]:
+                follow_stripped = follow.strip()
+                if not follow_stripped:
+                    continue
+                if follow_stripped.startswith(">"):
+                    subtitle = follow_stripped[1:].strip()
+                break
+            break
+    return title, subtitle
+
+
+def _append_field(paragraph, field_code: str) -> None:
+    run = paragraph.add_run()
+    fld_char_begin = OxmlElement("w:fldChar")
+    fld_char_begin.set(qn("w:fldCharType"), "begin")
+
+    instr_text = OxmlElement("w:instrText")
+    instr_text.set(qn("xml:space"), "preserve")
+    instr_text.text = field_code
+
+    fld_char_separate = OxmlElement("w:fldChar")
+    fld_char_separate.set(qn("w:fldCharType"), "separate")
+
+    fld_char_end = OxmlElement("w:fldChar")
+    fld_char_end.set(qn("w:fldCharType"), "end")
+
+    run._r.append(fld_char_begin)
+    run._r.append(instr_text)
+    run._r.append(fld_char_separate)
+    run._r.append(fld_char_end)
+
+
+def add_page_number_footer(doc: Document) -> None:
+    for section in doc.sections:
+        footer = section.footer
+        paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        paragraph.clear()
+        paragraph.add_run("Page ")
+        _append_field(paragraph, " PAGE ")
+        paragraph.add_run(" of ")
+        _append_field(paragraph, " NUMPAGES ")
+
+
+def add_title_page(doc: Document, title: str, subtitle: str | None) -> None:
+    doc.add_paragraph("")
+    doc.add_paragraph("")
+    heading = doc.add_paragraph()
+    heading.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    run = heading.add_run(title)
+    run.bold = True
+    run.font.name = "Aptos"
+    run.font.size = Pt(24)
+
+    if subtitle:
+        sub = doc.add_paragraph()
+        sub.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        sub_run = sub.add_run(subtitle)
+        sub_run.font.name = "Aptos"
+        sub_run.font.size = Pt(12)
+
+    generated = doc.add_paragraph()
+    generated.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    gen_run = generated.add_run(f"Generated: {Path.cwd().name}")
+    gen_run.font.name = "Aptos"
+    gen_run.font.size = Pt(11)
+
+    stamp = doc.add_paragraph()
+    stamp.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+    stamp_run = stamp.add_run("Mind Over Mountains Dashboard Guide")
+    stamp_run.font.name = "Aptos"
+    stamp_run.font.size = Pt(11)
+
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+
+
+def add_contents_page(doc: Document) -> None:
+    doc.add_heading("Contents", level=1)
+    paragraph = doc.add_paragraph()
+    _append_field(paragraph, r' TOC \o "1-3" \h \z \u ')
+    note = doc.add_paragraph()
+    note.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+    note_run = note.add_run("Update the table in Word if entries do not appear immediately.")
+    note_run.italic = True
+    note_run.font.size = Pt(10)
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
 
 def render_table(doc: Document, lines: list[str]) -> None:
@@ -97,6 +195,9 @@ def convert_manual(manual_path: Path) -> Path:
     section.start_type = WD_SECTION.NEW_PAGE
 
     lines = manual_path.read_text(encoding="utf-8").splitlines()
+    title, subtitle = extract_title_and_subtitle(lines)
+    add_title_page(doc, title, subtitle)
+    add_contents_page(doc)
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -148,6 +249,7 @@ def convert_manual(manual_path: Path) -> Path:
         i += 1
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    add_page_number_footer(doc)
     output_path = OUTPUT_DIR / f"{manual_path.stem}.docx"
     doc.save(output_path)
     return output_path
