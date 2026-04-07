@@ -2520,6 +2520,65 @@ def update_user_region(email, new_region):
                 save_local_json(USER_DB_FILE, db_data)
                 return
 
+def update_user_profile(email, new_name, new_email, new_region, audit_reason=None, audit_confirmed=False):
+    current_email = str(email or "").strip().lower()
+    updated_email = str(new_email or "").strip().lower()
+    updated_name = str(new_name or "").strip()
+    updated_region = str(new_region or "").strip() or "Global"
+    if not current_email or not updated_email:
+        return False
+
+    if DB_TYPE == 'supabase':
+        admin_client = get_admin_client()
+        if not admin_client:
+            return False
+        existing = admin_client.table('user_roles').select("user_id").eq('email', current_email).limit(1).execute()
+        if not existing.data:
+            return False
+        user_id = existing.data[0]["user_id"]
+        if updated_email != current_email:
+            duplicate = admin_client.table('user_roles').select("email").eq('email', updated_email).limit(1).execute()
+            if duplicate.data:
+                st.error("A user with that email already exists.")
+                return False
+            admin_client.auth.admin.update_user_by_id(user_id, {"email": updated_email})
+        admin_client.table('user_roles').update({
+            "name": updated_name,
+            "email": updated_email,
+            "region": updated_region,
+        }).eq('user_id', user_id).execute()
+    else:
+        db_data = load_local_json(USER_DB_FILE, {"users": []})
+        users_list = db_data.get("users", [])
+        target_user = None
+        for user in users_list:
+            if str(user.get('email', '')).strip().lower() == current_email:
+                target_user = user
+                break
+        if not target_user:
+            return False
+        if updated_email != current_email:
+            for user in users_list:
+                if user is not target_user and str(user.get('email', '')).strip().lower() == updated_email:
+                    st.error("A user with that email already exists.")
+                    return False
+        target_user["name"] = updated_name
+        target_user["email"] = updated_email
+        target_user["region"] = updated_region
+        save_local_json(USER_DB_FILE, db_data)
+
+    details = {
+        "target_email": current_email,
+        "updated_email": updated_email,
+        "updated_name": updated_name,
+        "updated_region": updated_region,
+    }
+    if audit_reason:
+        details["reason"] = audit_reason
+    details["confirmed"] = bool(audit_confirmed)
+    log_audit_event("User Profile Updated", details)
+    return True
+
 def delete_user(email, audit_reason=None, audit_confirmed=False):
     email = email.strip().lower()
     if DB_TYPE == 'supabase':
@@ -4725,8 +4784,13 @@ def admin_dashboard():
             
             if not df_users.empty:
                 user_emails = df_users['email'].tolist()
+                users_lookup = {
+                    str(row.get("email") or "").strip().lower(): row
+                    for row in users_data
+                    if str(row.get("email") or "").strip()
+                }
                 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.subheader("Reset Password")
                     target_email = st.selectbox("Select User", user_emails, key="reset_sel")
@@ -4773,6 +4837,55 @@ def admin_dashboard():
                             st.rerun()
 
                 with col3:
+                    st.subheader("Update User Details")
+                    target_profile_email = st.selectbox("Select User", user_emails, key="profile_sel")
+                    selected_profile = users_lookup.get(str(target_profile_email).strip().lower(), {})
+                    existing_profile_roles = get_user_roles(target_profile_email) or ["RPL"]
+                    current_profile_name = str(selected_profile.get("name") or "")
+                    current_profile_region = str(selected_profile.get("region") or "Global")
+                    profile_name = st.text_input("Full Name", value=current_profile_name, key="profile_name")
+                    profile_email = st.text_input("Email", value=target_profile_email, key="profile_email")
+                    if "Funder" in existing_profile_roles:
+                        funder_choices = get_available_funders()
+                        selected_profile_funder = current_profile_region
+                        if funder_choices:
+                            default_funder_index = funder_choices.index(current_profile_region) if current_profile_region in funder_choices else 0
+                            selected_profile_funder = st.selectbox("Funder Name", funder_choices, index=default_funder_index, key="profile_funder_name")
+                        manual_profile_funder = st.text_input("Or type funder name", value=current_profile_region if current_profile_region not in (funder_choices or []) else "", key="profile_funder_name_manual")
+                        if manual_profile_funder.strip():
+                            selected_profile_funder = manual_profile_funder.strip()
+                        profile_region = _encode_funder_scope(selected_profile_funder)
+                    else:
+                        default_profile_region_idx = REGION_OPTIONS.index(current_profile_region) if current_profile_region in REGION_OPTIONS else 0
+                        profile_region = st.selectbox("Region", REGION_OPTIONS, index=default_profile_region_idx, key="profile_region")
+                    profile_reason = st.text_input("Reason for profile update", key="profile_reason")
+                    profile_confirm = st.checkbox("I confirm this profile update", key="profile_confirm")
+                    if st.button("Update User Details"):
+                        if not profile_name.strip():
+                            st.error("Please provide a full name.")
+                        elif not profile_email.strip():
+                            st.error("Please provide an email.")
+                        elif "Funder" in existing_profile_roles and not (_decode_funder_scope(profile_region) or "").strip():
+                            st.error("Please select or enter a funder name for this Funder user.")
+                        elif not profile_reason.strip():
+                            st.error("Please provide a reason for the profile update.")
+                        elif not profile_confirm:
+                            st.error("Please confirm the profile update.")
+                        else:
+                            if update_user_profile(
+                                target_profile_email,
+                                profile_name,
+                                profile_email,
+                                profile_region,
+                                audit_reason=profile_reason.strip(),
+                                audit_confirmed=True,
+                            ):
+                                st.success("User details updated.")
+                                st.rerun()
+                            else:
+                                st.error("Unable to update user details.")
+
+                with col4:
                     st.subheader("Delete User")
                     target_del = st.selectbox("Select User", user_emails, key="del_sel")
                     delete_reason = st.text_input("Reason for deletion", key="delete_reason")
