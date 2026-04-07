@@ -1,20 +1,21 @@
 # Admin Dashboard Manual
 
 > Audience: `Admin` users  
-> Scope: user management, data refresh operations, audit review, and full reporting access
+> Scope: user accounts, data refresh, audit review, and full reporting access
 
 ![Admin dashboard annotated guide](images/admin-dashboard-guide.svg)
 
-## 1. What this manual covers
-Admins have the broadest access in the Regional KPI Dashboard. This role is responsible for:
+## 1. About this guide
+This guide explains how to use the dashboard as an Admin.
 
-- maintaining user access
+Admins have the widest level of access in the system. You are responsible for:
+
+- creating and updating user accounts
 - handling password reset requests
-- assigning and updating roles
-- monitoring Beacon sync health
-- triggering manual sync or CSV import when needed
-- reviewing audit activity
-- supporting Managers, RPLs, MLs, and Funders
+- changing user roles and access
+- checking whether data is up to date
+- running manual refresh actions when needed
+- reviewing audit history
 
 Available views:
 
@@ -25,212 +26,240 @@ Available views:
 - `Funder Dashboard`
 - `ML Dashboard`
 
-## 2. Before you start
-Use this checklist before making any administrative change:
+## 2. Before you make changes
+Use this quick checklist before changing anything important.
 
-1. Confirm you are signed in with your own Admin account.
-2. Check the `Last Data Refresh` card in the sidebar.
-3. Record a clear business reason before changing roles, deleting users, or resetting data.
-4. Prefer the smallest action that solves the problem.
+1. Make sure you are signed in with your own Admin account.
+2. Check the `Last Data Refresh` time in the sidebar.
+3. Be clear about why you are making the change.
+4. Choose the smallest action that solves the problem.
+5. Be especially careful when deleting users or resetting data.
 
 ![Navigation and screen areas](images/dashboard-navigation.svg)
 
-## 3. Signing in and moving around
-1. Open the dashboard URL.
+## 3. Signing in
+1. Open the dashboard link.
 2. Enter your email address and password.
-3. If prompted, change your password before continuing.
-4. Use `View Mode` in the left sidebar to move between dashboards.
+3. Change your password if the system asks you to do so.
+4. Use `View Mode` in the left sidebar to move between screens.
 
-If the application reports `Admin client not available`, the admin Supabase configuration is likely incomplete and should be checked before you continue.
+If you see `Admin client not available`, the system is missing some Admin configuration and should be checked before you continue.
 
-## 4. Admin Dashboard screen tour
-The `Admin Dashboard` is the operational control panel for the application.
+## 4. Main areas of the Admin Dashboard
+The `Admin Dashboard` is the control area for running the system.
 
-Main areas:
+Main sections:
 
-- `Password Reset Requests`: pending self-service reset requests
-- `Create New User`: create staff, admin, ML, RPL, manager, or funder users
-- `Existing Users & Actions`: reset passwords, update roles, delete users
-- `Sync Performance`: timing and status for recent sync activity
-- `Beacon API Sync`: smoke test, manual sync, stop, and stuck-sync controls
-- `Beacon CSV Upload`: manual import from exported CSV files
-- data reset actions: controlled rebuild or refresh operations
-- `Audit Logs`: review of administrative and user activity
+- `Password Reset Requests`
+- `Create New User`
+- `Existing Users & Actions`
+- `Sync Performance`
+- `Beacon API Sync`
+- `Beacon CSV Upload`
+- data reset actions
+- `Audit Logs`
 
-## 5. User management workflows
+## 5. User management
 ### 5.1 Handle a password reset request
-Use this when a user has selected `Forgot password?` and needs access restored.
+Use this when a user has clicked `Forgot password?`.
 
 1. Open `Password Reset Requests`.
-2. Select the pending email address.
+2. Choose the user’s email address.
 3. Enter a temporary password.
 4. Click `Set Temporary Password`.
-5. Tell the user to sign in and change the password immediately.
+5. Tell the user to sign in and change the password straight away.
 
-Expected result:
+What happens next:
 
-- the request is marked as completed
-- the user is forced to change password on next login
-- the action is recorded in the audit trail
+- the reset request is marked as completed
+- the user is asked to change the password at next sign-in
+- the action is recorded in the audit log
 
 ### 5.2 Create a new user
 1. Open `Create New User`.
-2. Enter full name, email, and a starting password.
-3. Select one or more roles.
-4. If `Funder` is included, choose the funder name or enter a new one.
-5. Submit the form.
+2. Enter the person’s full name.
+3. Enter their email address.
+4. Enter a starting password.
+5. Choose one or more roles.
+6. Choose a region from the dropdown if the user is not a funder.
+7. If the user is a funder, choose the funder name or enter one manually.
+8. Click `Create User`.
 
 Good practice:
 
-- use named organisational email addresses where possible
+- use a named work email where possible
 - avoid shared accounts
-- confirm the least-privilege role before saving
+- give the lowest level of access the person needs
 
-### 5.3 Reset an existing user's password
-1. Find the user in `Existing Users & Actions`.
-2. Choose `Reset Password`.
-3. Enter the new temporary password.
-4. Confirm the reset.
+### 5.3 Update an existing user
+The `Existing Users & Actions` area lets you update a user without deleting and recreating the account.
 
-Use this when the self-service route is unavailable or urgent support is required.
+You can:
 
-### 5.4 Update roles
-1. Select the user.
-2. Choose the revised role set.
-3. If `Funder` is included, verify the mapped funder.
-4. Enter a reason that explains the change.
-5. Confirm and apply the update.
+- reset a password
+- update roles
+- update name, email, and region
+- delete a user
 
-Prefer updating the role over deleting and recreating an account. It preserves continuity and makes the audit history easier to follow.
+### 5.4 Reset a password manually
+1. Go to `Existing Users & Actions`.
+2. Open `Reset Password`.
+3. Select the user.
+4. Enter the new temporary password.
+5. Apply the change.
 
-### 5.5 Delete a user
-1. Select the user record.
-2. Enter the deletion reason.
-3. Confirm the action carefully.
-4. Click `Delete User`.
+Use this when the normal self-service route is not enough.
 
-Use deletion only when the account should no longer have dashboard access. If the person still works with the system, a role change is usually safer.
+### 5.5 Update a user’s role
+1. Open `Update Role`.
+2. Select the user.
+3. Choose the correct role or roles.
+4. If `Funder` is selected, confirm the correct funder name.
+5. Enter the reason for the change.
+6. Confirm the update.
+7. Click `Update Role`.
 
-## 6. Sync and data operations
-### 6.1 Read the Sync Performance panel
-Use `Sync Performance` to understand whether the data pipeline is healthy.
+### 5.6 Update a user’s details
+1. Open `Update User Details`.
+2. Select the user.
+3. Update their full name if needed.
+4. Update their email address if needed.
+5. Update their region if needed.
+6. Enter the reason for the change.
+7. Confirm the update.
+8. Click `Update User Details`.
 
-Key indicators:
+### 5.7 Delete a user
+1. Open `Delete User`.
+2. Select the user.
+3. Enter the reason for deletion.
+4. Confirm the action.
+5. Click `Delete User`.
 
-- last total sync duration
-- fetch, transform, and upsert timings
-- average duration across recent successful syncs
-- last successful sync time
-- whether the latest run was `automatic` or `manual`
+Delete a user only when they should no longer have access at all. If they still need access, a role or profile update is usually better.
 
-Use this section when:
+## 6. Data refresh and sync checks
+### 6.1 Sync Performance
+Use `Sync Performance` to check whether the system is healthy.
 
-- the dashboard looks stale
-- overnight syncs may have failed
-- a manual sync seems slower than expected
+This section helps you review:
+
+- how long the last sync took
+- whether the last run was manual or automatic
+- whether the data may be out of date
+- whether recent syncs are getting slower
 
 ### 6.2 Run a Beacon smoke test
-Use `Run Beacon API Smoke Test` first when diagnosing a sync issue.
+Use `Run Beacon API Smoke Test` before a full manual sync if you are checking for connection problems.
 
-This is the lowest-risk check because it validates connectivity and response shape without running a full import.
+This is the safest first step because it checks the connection without running a full import.
 
 ### 6.3 Run a manual sync
 1. Open `Beacon API Sync`.
-2. Start with a smoke test if you are troubleshooting.
+2. Run a smoke test first if you are troubleshooting.
 3. Click `Sync Beacon API to Database`.
-4. Monitor progress messages.
-5. Use `Stop Manual API Sync` only if the run is genuinely stuck or was started by mistake.
-6. Use `Clear Stuck Sync` only after confirming no live sync is still running.
+4. Watch the progress messages.
+5. Use `Stop Manual API Sync` only if the sync is clearly stuck.
+6. Use `Clear Stuck Sync` only after checking there is no live sync still running.
 
-### 6.4 Upload Beacon CSV exports
-Use this route only when you intentionally want to import exported files instead of using the API.
+### 6.4 Upload Beacon CSV files
+Use this only when you are intentionally loading exported CSV files instead of using the API.
 
 1. Open `Beacon CSV Upload`.
-2. Select the required CSV files.
-3. Start the import.
-4. Review the outcome before moving on to reporting.
+2. Select the required files.
+3. Start the upload.
+4. Check the result message before moving on.
 
-### 6.5 Refresh or rebuild data
-Administrative reset actions should be treated as controlled maintenance tasks.
+### 6.5 Reset or rebuild dashboard data
+Treat reset actions as maintenance work.
 
 Use them only when:
 
-- a failed import needs a clean restart
-- the working dataset must be rebuilt
-- support or data QA has agreed a reset is necessary
+- an import has failed badly
+- the working data needs rebuilding
+- support or data checking work has agreed that a reset is needed
 
-Do not use them casually during active reporting periods.
+Do not use reset actions casually during active reporting.
 
 ## 7. Audit logs
-Audit review is the first place to look before assuming a user error or data issue.
+The `Audit Logs` section shows a history of important actions.
 
-The log can help confirm:
+Use it to check:
 
 - who changed a role
+- who changed a user profile
 - who reset a password
 - who started a sync
 - who deleted a user
-- who saved or shared reports
-- which major dashboard interactions took place
+- who saved or shared a report
 
-Use the audit trail for support tickets, governance checks, and internal accountability.
+Use the log when investigating support issues or checking accountability.
 
-## 8. Using the other dashboards as Admin
-Admins can use every operational and reporting view.
-
+## 8. Other dashboards available to Admins
 ### KPI Dashboard
-- full regional KPI access
-- drill-down into supporting rows
-- `Show KPI Debug` for validation checks
-- attendee names and IDs visible where source data supports them
+Use this for:
+
+- headline KPI monitoring
+- drill-down into supporting records
+- validation using `Show KPI Debug`
 
 ### Custom Reports Dashboard
-- all datasets and report outputs
-- CSV export
-- advanced filter controls
-- distance analysis for participant travel review
+Use this for:
+
+- detailed tables
+- charts
+- exports
+- advanced filters
+- distance analysis
 
 ### ML Dashboard
-- event-by-event operational review
-- participant, medical, and emergency fields where available
-- raw event payload for support investigation
+Use this for:
+
+- event-by-event review
+- participant review where source data supports it
+- medical and emergency information where available
 
 ### Funder Dashboard
-- funder summary view with selectable funder
-- useful for preparing sponsor updates or QA of funder-facing figures
+Use this for:
+
+- checking what funder-facing users will see
+- sponsor or funder reporting review
 
 ### Case Studies
-- read, filter, and upload qualitative evidence
+Use this for:
 
-## 9. Recommended admin operating pattern
+- reading existing stories
+- filtering by date and region
+- adding new stories and testimonials
+
+## 9. Recommended way of working
 1. Check `Last Data Refresh`.
 2. Review `Sync Performance` if the data looks old.
 3. Run a smoke test before a manual sync.
-4. Make user-access changes with a clear reason recorded.
-5. Validate suspicious numbers in KPI or Custom Reports before responding to stakeholders.
-6. Review audit logs if the history of an issue is unclear.
+4. Record a clear reason before changing access or deleting a user.
+5. Check the audit log if you are unsure what has already happened.
 
 ## 10. Troubleshooting
 ### `Admin client not available`
-- check the admin Supabase secrets and service-role configuration
-- confirm the application has the required admin credentials loaded
+- check the Admin Supabase settings
+- confirm the service-role configuration is loaded correctly
 
-### Sync appears stuck
+### Sync looks stuck
 - review the sync status first
-- use `Stop Manual API Sync` if a manual run is genuinely hung
-- use `Clear Stuck Sync` only after confirming the process is not still active
+- use `Stop Manual API Sync` only when needed
+- use `Clear Stuck Sync` only after checking nothing is still running
 
-### Users cannot sign in
-- check whether there is a pending reset request
+### A user cannot sign in
+- check whether they requested a password reset
 - reset the password manually if needed
-- confirm the account still has a valid role assignment
+- check that the user still has the correct role
 
-### Dashboard data looks out of date
+### The dashboard looks out of date
 - check `Last Data Refresh`
 - review `Sync Performance`
-- run a smoke test, then a manual sync if needed
+- run a smoke test and then a manual sync if needed
 
-### A user asks for more access
-- review whether a role change is sufficient
-- apply least privilege
-- record the reason in the audit trail
+### Someone needs different access
+- update the role instead of deleting the account
+- use least privilege
+- record the reason for the change

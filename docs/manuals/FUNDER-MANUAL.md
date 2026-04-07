@@ -1,12 +1,14 @@
 # Funder Dashboard Manual
 
 > Audience: `Funder` users  
-> Scope: privacy-safe, aggregated funding and delivery summary information
+> Scope: safe, high-level funding and delivery summary information
 
 ![Funder dashboard annotated guide](images/funder-dashboard-guide.svg)
 
-## 1. Role overview
-The Funder Dashboard is designed for external or restricted users who need a concise, GDPR-safe reporting view.
+## 1. About this guide
+This guide explains the dashboard for funder users.
+
+The Funder view is designed to be simple, safe, and easy to read.
 
 Available view:
 
@@ -18,50 +20,54 @@ Funder users cannot access:
 - `KPI Dashboard`
 - `Custom Reports Dashboard`
 - `ML Dashboard`
-- row-level operational drill-down
+- detailed operational drill-down
 
 ## 2. What this dashboard is for
-The screen is intended to answer high-level questions such as:
+Use this dashboard to answer questions such as:
 
 - how many bids have been submitted
-- how much funding has been raised
-- what the income trend looks like over time
+- how much money has been raised
+- what the funding trend looks like over time
 - when the dashboard was last refreshed
 
-Your assigned funder is applied automatically, so the page opens in a safe filtered state.
+Your funder access is applied automatically so the page opens in a safe filtered state.
 
-## 3. Signing in and getting started
+## 3. Signing in
 1. Open the dashboard link.
-2. Sign in with your email address and password.
-3. Change your password if prompted.
-4. Review the current timeframe and the `Last Data Refresh` timestamp before using the numbers in a meeting or report.
+2. Enter your email address and password.
+3. Change your password if the system asks you to do so.
+4. Check the timeframe and `Last Data Refresh` before using the figures in a report or meeting.
 
-## 4. Privacy model
-The Funder Dashboard is intentionally restricted.
+## 4. Privacy and access
+The Funder Dashboard is intentionally limited.
 
 It shows:
 
-- aggregated counts
-- aggregated funding totals
-- grouped charts and summaries
+- totals
+- summary counts
+- grouped financial information
+- trend views
 
 It does not show:
 
 - personal data
-- attendee-level records
 - named participants
-- raw operational drill-down rows
+- attendee-level records
+- operational records behind the totals
 
-If you need a deeper pack, request it from the organisation rather than expecting it from the Funder view.
+If you need something more detailed, ask the organisation for a managed report.
 
 ## 5. Filters
-Available controls are intentionally limited.
+Funder users have limited controls by design.
 
-As a Funder user:
+You can:
 
-- region is fixed to `Global`
-- your assigned funder is already applied
-- you can change the timeframe
+- change the timeframe
+
+You cannot:
+
+- change the region, because it is fixed to `Global`
+- open the wider operational views
 
 Typical timeframe options:
 
@@ -72,66 +78,64 @@ Typical timeframe options:
 - `Custom Range`
 
 ## 6. Reading the dashboard
-### Headline metrics
-The top-level cards show:
+### Headline cards
+The top cards usually show:
 
 - `Bids Submitted`
 - `Total Funds Raised`
 
-These update with the selected timeframe and your assigned funder.
+These figures update when you change the timeframe.
 
 ### Income trend
-The `Income Trend` chart summarises how funding has moved over time.
+The trend area helps you see how funding has changed over time.
 
-It combines:
+Use it to spot:
 
-- payments
-- grants
-
-Use it to identify whether activity is:
-
-- steady
-- seasonal
-- concentrated in particular periods
+- busy periods
+- quiet periods
+- whether activity is steady or uneven
 
 ### Last Data Refresh
-Use the refresh timestamp to check whether the figures are current enough for your purpose.
+Always check the refresh time before using the figures in external reporting.
 
-If the timestamp appears too old, ask the dashboard administrator before relying on the numbers.
+If the date looks too old, ask the dashboard administrator to review it.
 
-## 7. Typical funder tasks
+## 7. Common tasks
 ### Prepare for a review meeting
 1. Open the dashboard.
-2. Set the timeframe for the reporting period.
-3. Review `Bids Submitted`, `Total Funds Raised`, and the `Income Trend`.
-4. Note the `Last Data Refresh` timestamp.
+2. Choose the reporting period.
+3. Review `Bids Submitted`.
+4. Review `Total Funds Raised`.
+5. Review the income trend.
+6. Check `Last Data Refresh`.
 
-### Compare current activity with a wider period
+### Compare a recent period with a wider period
 1. Start with `All Time`.
 2. Review the overall trend.
 3. Narrow to `Year`, `Quarter`, or `Month`.
-4. Compare how the headline cards change.
+4. Compare the change in the headline figures.
 
 ## 8. What funder users cannot do
 Funder users cannot:
 
-- switch to the other dashboards
+- switch to the other dashboard views
 - inspect personal records
-- access participant detail
+- access participant details
 - run custom reports
-- manage users or sync operations
+- manage users
+- run sync actions
 
-These limits are intentional and support privacy-safe external reporting.
+These limits are intentional.
 
 ## 9. Troubleshooting
-### I see no data
-- widen the timeframe first
-- confirm your assigned funder has grant or payment records in the selected period
+### I cannot see any data
+- widen the timeframe
+- check whether your assigned funder has records in that period
 
-### The figures look out of date
+### The figures look old
 - check `Last Data Refresh`
-- contact the dashboard administrator if the timestamp is older than expected
+- contact the dashboard administrator if the refresh time looks too old
 
 ### I need participant-level evidence
 - that is not available in the Funder role
-- request a managed report from the organisation instead
+- ask the organisation for a managed report instead
