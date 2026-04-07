@@ -20,6 +20,7 @@ from supabase import create_client, Client
 # --- CONFIGURATION ---
 USER_DB_FILE = 'usersAuth.json'
 CASE_STUDIES_FILE = 'case_studies.json'
+REGION_OPTIONS = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
 
 st.set_page_config(page_title="Regional KPI Dashboard", layout="wide")
 
@@ -4697,7 +4698,7 @@ def admin_dashboard():
                 selected_funder_name = manual_funder.strip()
             new_region = _encode_funder_scope(selected_funder_name)
         else:
-            new_region = st.text_input("Region (e.g., North West)")
+            new_region = st.selectbox("Region", REGION_OPTIONS, index=0, key="new_user_region")
         
         if st.button("Create User"):
             if new_email and new_pw:
