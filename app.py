@@ -5226,6 +5226,32 @@ def main_dashboard():
         e4.metric("Bids Submitted", debug.get("bids_submitted", 0))
 
     raw_kpi = data.get("_raw_kpi") or {}
+    current_role = st.session_state.get("role")
+    assigned_region = st.session_state.get("region") or "Global"
+
+    def _record_matches_region_scope(record, scope_region):
+        if not isinstance(record, dict):
+            return False
+        if not scope_region or str(scope_region).strip() == "" or str(scope_region) == "Global":
+            return True
+        record_regions = _extract_region_tags(record)
+        if not record_regions and record.get("region") not in [None, ""]:
+            record_regions = _to_list(record.get("region"))
+        scope_norm = str(scope_region).strip().lower()
+        for item in record_regions:
+            item_norm = str(item).strip().lower()
+            if item_norm and (scope_norm in item_norm or item_norm in scope_norm):
+                return True
+        return False
+
+    def _drilldown_rows(rows):
+        if current_role != "RPL":
+            return rows or []
+        return [r for r in (rows or []) if _record_matches_region_scope(r, assigned_region)]
+
+    def _drilldown_caption(base_label):
+        if current_role == "RPL" and assigned_region not in ("", "Global"):
+            st.caption(f"{base_label} Drill-down rows are limited to your assigned region: {assigned_region}.")
 
     def _rows_to_df(rows, field_map):
         out = []
@@ -5340,8 +5366,9 @@ def main_dashboard():
             ):
                 st.caption("Derived from steering volunteer tags in current filtered data.")
                 if _details_enabled("lazy_gov_steering_active"):
+                    _drilldown_caption("Permission scope.")
                     _render_deep_drilldown(
-                        raw_kpi.get("steering_volunteers") or [],
+                        _drilldown_rows(raw_kpi.get("steering_volunteers") or []),
                         lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
                         key="dd_gov_steering_active",
                         empty_msg="No steering source rows found for deeper drill-down.",
@@ -5352,8 +5379,10 @@ def main_dashboard():
                 width="stretch",
             ):
                 if _details_enabled("lazy_gov_steering_members"):
+                    steering_rows = _drilldown_rows(raw_kpi.get("steering_volunteers") or [])
+                    _drilldown_caption("Permission scope.")
                     steering_df = _rows_to_df(
-                        raw_kpi.get("steering_volunteers") or [],
+                        steering_rows,
                         {
                             "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
                             "Type": lambda r: ", ".join(_to_list(r.get("type"))),
@@ -5366,7 +5395,7 @@ def main_dashboard():
                     else:
                         _show_df_limited(steering_df, key="tbl_gov_steering_members")
                     _render_deep_drilldown(
-                        raw_kpi.get("steering_volunteers") or [],
+                        steering_rows,
                         lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
                         key="dd_gov_steering_members",
                         empty_msg="No steering source rows found for deeper drill-down.",
@@ -5377,8 +5406,10 @@ def main_dashboard():
                 width="stretch",
             ):
                 if _details_enabled("lazy_gov_new_volunteers"):
+                    volunteer_rows = _drilldown_rows(raw_kpi.get("volunteers") or [])
+                    _drilldown_caption("Permission scope.")
                     volunteers_df = _rows_to_df(
-                        raw_kpi.get("volunteers") or [],
+                        volunteer_rows,
                         {
                             "Name": lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
                             "Type": lambda r: ", ".join(_to_list(r.get("type"))),
@@ -5391,7 +5422,7 @@ def main_dashboard():
                     else:
                         _show_df_limited(volunteers_df, key="tbl_gov_new_volunteers")
                     _render_deep_drilldown(
-                        raw_kpi.get("volunteers") or [],
+                        volunteer_rows,
                         lambda r: _get_row_value(r, "name", "full_name", "Display Name", "email") or r.get("id"),
                         key="dd_gov_new_volunteers",
                         empty_msg="No volunteer source rows found for deeper drill-down.",
@@ -5417,8 +5448,10 @@ def main_dashboard():
             ):
                 st.markdown("**List of Organisations**")
                 if _details_enabled("lazy_part_active_orgs"):
+                    org_rows = _drilldown_rows(raw_kpi.get("region_orgs") or [])
+                    _drilldown_caption("Permission scope.")
                     org_df = _rows_to_df(
-                        raw_kpi.get("region_orgs") or [],
+                        org_rows,
                         {
                             "Organisation": lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
                             "Type": lambda r: str(r.get("type") or ""),
@@ -5431,7 +5464,7 @@ def main_dashboard():
                     else:
                         _show_df_limited(org_df, key="tbl_part_active_orgs")
                     _render_deep_drilldown(
-                        raw_kpi.get("region_orgs") or [],
+                        org_rows,
                         lambda r: _get_row_value(r, "name", "Organisation", "Organization", "Display Name") or r.get("id"),
                         key="dd_part_active_orgs",
                         empty_msg="No organisation source rows found for deeper drill-down.",
@@ -5457,7 +5490,8 @@ def main_dashboard():
             ):
                 st.markdown("**List of Attendees by Event**")
                 if _details_enabled("lazy_del_events"):
-                    delivery_events = raw_kpi.get("delivery_events") or []
+                    delivery_events = _drilldown_rows(raw_kpi.get("delivery_events") or [])
+                    _drilldown_caption("Permission scope.")
                     attendees_rows = []
                     for e in delivery_events:
                         attendees_rows.append({
@@ -5482,7 +5516,8 @@ def main_dashboard():
                 width="stretch",
             ):
                 if _details_enabled("lazy_del_participants"):
-                    delivery_events = raw_kpi.get("delivery_events") or []
+                    delivery_events = _drilldown_rows(raw_kpi.get("delivery_events") or [])
+                    _drilldown_caption("Permission scope.")
                     delivery_df = pd.DataFrame(delivery_events)
                     if delivery_df.empty:
                         st.caption("No delivery-tagged event rows found for this filtered period.")
@@ -5576,8 +5611,11 @@ def main_dashboard():
                     width="stretch",
                 ):
                     if _details_enabled("lazy_inc_total_funds"):
+                        payment_source_rows = _drilldown_rows(raw_kpi.get("region_payments") or [])
                         payment_rows = []
-                        for p in raw_kpi.get("region_payments") or []:
+                        grant_source_rows = _drilldown_rows(raw_kpi.get("region_grants") or [])
+                        _drilldown_caption("Permission scope.")
+                        for p in payment_source_rows:
                             payment_rows.append({
                                 "Source": "Payments",
                                 "When": p.get("payment_date") or p.get("date") or p.get("created_at"),
@@ -5586,7 +5624,7 @@ def main_dashboard():
                                 "Status": _get_row_value(p, "status", "payment_status", "Payment Status") or "",
                             })
                         grant_rows = []
-                        for g in raw_kpi.get("region_grants") or []:
+                        for g in grant_source_rows:
                             grant_rows.append({
                                 "Source": "Grants",
                                 "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
@@ -5617,8 +5655,10 @@ def main_dashboard():
                     width="stretch",
                 ):
                     if _details_enabled("lazy_inc_bids"):
+                        grant_source_rows = _drilldown_rows(raw_kpi.get("region_grants") or [])
+                        _drilldown_caption("Permission scope.")
                         grant_rows = []
-                        for g in raw_kpi.get("region_grants") or []:
+                        for g in grant_source_rows:
                             grant_rows.append({
                                 "Source": "Grants",
                                 "When": g.get("close_date") or g.get("award_date") or g.get("created_at"),
@@ -5643,7 +5683,8 @@ def main_dashboard():
                     width="stretch",
                 ):
                     if _details_enabled("lazy_inc_corp"):
-                        corp_rows = raw_kpi.get("corporate_orgs") or []
+                        corp_rows = _drilldown_rows(raw_kpi.get("corporate_orgs") or [])
+                        _drilldown_caption("Permission scope.")
                         corp_df = _rows_to_df(
                             corp_rows,
                             {
