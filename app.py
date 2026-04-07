@@ -4078,6 +4078,7 @@ def _gdpr_safe_count(value, threshold=5):
     return f"{max(0, n):,}"
 
 def _show_df_limited(df, key, default_limit=150):
+    df = _sanitize_dataframe_for_role(df)
     if df is None or df.empty:
         st.caption("No rows found for this selection.")
         return
@@ -4093,22 +4094,65 @@ def _can_view_event_attendee_details():
     roles = _session_roles()
     return any(r in ["Admin", "Manager", "ML"] for r in roles if r)
 
+def _can_view_personal_details():
+    roles = _session_roles()
+    return any(r in ["Admin", "Manager", "ML"] for r in roles if r)
+
+def _is_personal_field_name(name):
+    key = str(name or "").strip().lower()
+    if not key:
+        return False
+    personal_keywords = (
+        "name", "full_name", "display_name", "participant", "attendee", "person",
+        "email", "phone", "mobile", "telephone", "dob", "date_of_birth",
+        "address", "postcode", "gender", "pronoun", "contact", "emergency",
+        "medical", "health", "medication", "condition", "allergy",
+    )
+    exact_blocklist = {
+        "label", "participant", "participant_id", "participant_postcode",
+        "attendee_id", "person_id", "contact_id",
+    }
+    return key in exact_blocklist or any(token in key for token in personal_keywords)
+
+def _sanitize_value_for_role(value):
+    if _can_view_personal_details():
+        return value
+    if isinstance(value, dict):
+        return _sanitize_record_for_role(value)
+    if isinstance(value, list):
+        sanitized = []
+        for item in value:
+            if isinstance(item, dict):
+                sanitized_item = _sanitize_record_for_role(item)
+                if sanitized_item:
+                    sanitized.append(sanitized_item)
+        return sanitized
+    return value
+
 def _sanitize_record_for_role(record):
-    if _can_view_event_attendee_details():
+    if _can_view_personal_details():
         return record
     if not isinstance(record, dict):
         return record
-    redacted_keys = {
-        "participant_list",
-        "participants_list",
-        "participant_ids",
-        "participant_names",
-        "attendee_list",
-        "attendees_list",
-        "attendee_names",
-        "raw_event",
-    }
-    return {k: v for k, v in record.items() if k not in redacted_keys}
+    sanitized = {}
+    for k, v in record.items():
+        if k == "raw_event":
+            continue
+        if _is_personal_field_name(k):
+            continue
+        sanitized_value = _sanitize_value_for_role(v)
+        if sanitized_value in (None, "", [], {}):
+            continue
+        sanitized[k] = sanitized_value
+    return sanitized
+
+def _sanitize_dataframe_for_role(df):
+    if _can_view_personal_details() or df is None or df.empty:
+        return df
+    keep_cols = [c for c in df.columns if not _is_personal_field_name(c)]
+    if not keep_cols:
+        return pd.DataFrame(index=df.index)
+    return df[keep_cols].copy()
 
 def ml_dashboard():
     st.title("Mountain Leader Dashboard")
@@ -5386,6 +5430,7 @@ def main_dashboard():
         return str(name).replace("_", " ").strip().title()
 
     def _render_readable_record(record, key_prefix):
+        record = _sanitize_record_for_role(record)
         if not isinstance(record, dict):
             st.write(record)
             return
@@ -5443,12 +5488,15 @@ def main_dashboard():
             return None
         labels = []
         for i, row in enumerate(rows):
-            try:
-                label = label_getter(row)
-            except Exception:
-                label = None
-            label = str(label).strip() if label is not None else ""
-            if not label:
+            if _can_view_personal_details():
+                try:
+                    label = label_getter(row)
+                except Exception:
+                    label = None
+                label = str(label).strip() if label is not None else ""
+                if not label:
+                    label = f"Record {i + 1}"
+            else:
                 label = f"Record {i + 1}"
             labels.append(label)
         selected_idx = st.selectbox(
@@ -6264,6 +6312,8 @@ def custom_reports_dashboard():
 
     st.sidebar.markdown("### Report Filters")
     dataset_choices = ["People", "Organisations", "Events", "Payments", "Grants"]
+    if not _can_view_personal_details():
+        dataset_choices = [d for d in dataset_choices if d != "People"]
     selected_datasets = st.sidebar.multiselect(
         "Datasets",
         dataset_choices,
@@ -6309,6 +6359,7 @@ def custom_reports_dashboard():
         st.sidebar.caption("Filters changed. Click Apply Report Filters to refresh the report.")
 
     selected_datasets = applied_filters.get("selected_datasets") or []
+    selected_datasets = [d for d in selected_datasets if d in dataset_choices]
     report_type = applied_filters.get("report_type") or report_type
     region_val = applied_filters.get("region_val") or region_val
     timeframe = applied_filters.get("timeframe") or timeframe
@@ -6401,6 +6452,14 @@ def custom_reports_dashboard():
     if df.empty:
         st.warning("No records left after advanced filters.")
         return
+
+    if not _can_view_personal_details():
+        if "dataset" in df.columns and "label" in df.columns:
+            df.loc[df["dataset"].astype(str) == "People", "label"] = "Person"
+        df = _sanitize_dataframe_for_role(df)
+        if df.empty:
+            st.warning("This report only contains personal-detail fields that are hidden for your role.")
+            return
 
     st.caption(f"Rows: {len(df)} | Datasets: {', '.join(selected_datasets)} | Timeframe: {timeframe}")
     st.download_button(
@@ -6542,19 +6601,22 @@ def custom_reports_dashboard():
         detail_limit = st.number_input("Detail rows", min_value=25, max_value=5000, value=250, step=25, key="reports_distance_detail_limit")
         detail_source_df = event_detail_df if not event_detail_df.empty else distance_df
         detail_df = detail_source_df[detail_cols].sort_values("distance_miles", ascending=False).head(int(detail_limit))
+        detail_df = _sanitize_dataframe_for_role(detail_df)
         st.markdown("**Participant-Level Journey Detail**")
         _safe_dataframe(detail_df, width="stretch", hide_index=True)
         if not event_detail_df.empty:
+            selected_event_export_df = _sanitize_dataframe_for_role(event_detail_df)
             st.download_button(
                 "Download Selected Event CSV",
-                data=event_detail_df.to_csv(index=False).encode("utf-8"),
+                data=selected_event_export_df.to_csv(index=False).encode("utf-8"),
                 file_name="participant_distance_selected_event.csv",
                 mime="text/csv",
                 key="reports_distance_selected_event_csv",
             )
+        distance_export_df = _sanitize_dataframe_for_role(distance_df)
         st.download_button(
             "Download Distance Analysis CSV",
-            data=distance_df.to_csv(index=False).encode("utf-8"),
+            data=distance_export_df.to_csv(index=False).encode("utf-8"),
             file_name="participant_distance_analysis.csv",
             mime="text/csv",
             key="reports_distance_csv",
