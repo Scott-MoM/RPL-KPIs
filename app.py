@@ -4110,7 +4110,7 @@ def _is_personal_field_name(name):
     )
     exact_blocklist = {
         "label", "participant", "participant_id", "participant_postcode",
-        "attendee_id", "person_id", "contact_id",
+        "attendee_id", "person_id", "contact_id", "raw_event", "payload",
     }
     return key in exact_blocklist or any(token in key for token in personal_keywords)
 
@@ -4149,7 +4149,15 @@ def _sanitize_record_for_role(record):
 def _sanitize_dataframe_for_role(df):
     if _can_view_personal_details() or df is None or df.empty:
         return df
-    keep_cols = [c for c in df.columns if not _is_personal_field_name(c)]
+    keep_cols = []
+    for c in df.columns:
+        if _is_personal_field_name(c):
+            continue
+        series = df[c]
+        has_nested_values = series.apply(lambda v: isinstance(v, (dict, list))).any()
+        if has_nested_values:
+            continue
+        keep_cols.append(c)
     if not keep_cols:
         return pd.DataFrame(index=df.index)
     return df[keep_cols].copy()
@@ -5692,7 +5700,16 @@ def main_dashboard():
                 if _details_enabled("lazy_del_participants"):
                     delivery_events = _drilldown_rows(raw_kpi.get("delivery_events") or [])
                     _drilldown_caption("Permission scope.")
-                    delivery_df = pd.DataFrame(delivery_events)
+                    delivery_df = _rows_to_df(
+                        delivery_events,
+                        {
+                            "Event": lambda r: _get_row_value(r, "name", "title", "event_name", "Display Name") or r.get("id"),
+                            "Date": lambda r: _get_row_value(r, "start_date", "date", "created_at"),
+                            "Region": lambda r: ", ".join(_to_list(r.get("c_region") or r.get("region") or "")),
+                            "Participants": lambda r: _coerce_int(r.get("participants") or _get_row_value(r, "number_of_attendees", "Number of attendees", "attendees", "participant_count")),
+                            "Event Type": lambda r: _get_row_value(r, "type", "event_type", "category"),
+                        },
+                    )
                     if delivery_df.empty:
                         st.caption("No delivery-tagged event rows found for this filtered period.")
                     else:
