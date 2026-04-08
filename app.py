@@ -6156,10 +6156,28 @@ def main_dashboard():
                 st.caption("No deeper drill-down source rows are mapped for this metric yet.")
         
         st.subheader("Demographics")
-        df_demo = pd.DataFrame(list(data['delivery']['demographics'].items()), columns=['Group', 'Count'])
+        demo_items = list((data["delivery"].get("demographics") or {}).items())
+        age_groups = {"18-30", "30-40", "40-45", "45-65", "65-75", "75+", "Unknown Age"}
+        gender_groups = {"Men", "Women", "Mixed / Other", "Unknown / Not provided"}
+        gender_demo = [(group, count) for group, count in demo_items if str(group) in gender_groups]
+        age_demo = [(group, count) for group, count in demo_items if str(group) in age_groups]
+        df_gender_demo = pd.DataFrame(gender_demo, columns=["Group", "Count"])
+        df_age_demo = pd.DataFrame(age_demo, columns=["Group", "Count"])
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
         st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
-        _safe_dataframe(df_demo, width="stretch", hide_index=True)
+        demo_col1, demo_col2 = st.columns(2)
+        with demo_col1:
+            st.markdown("**Gender**")
+            if df_gender_demo.empty:
+                st.caption("No gender demographic data available for this selection.")
+            else:
+                _safe_dataframe(df_gender_demo, width="stretch", hide_index=True)
+        with demo_col2:
+            st.markdown("**Age**")
+            if df_age_demo.empty:
+                st.caption("No age demographic data available for this selection.")
+            else:
+                _safe_dataframe(df_age_demo, width="stretch", hide_index=True)
         if demo_source == "event_attendee_demographics":
             st.caption("Demographics shown from attendee gender and age values synced from Beacon and normalized into dashboard groupings.")
         elif demo_source == "people_type_tags":
