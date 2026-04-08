@@ -2715,6 +2715,36 @@ def get_all_users():
                 out.append(row)
             return out
 
+def _user_sort_key(user):
+    name = str((user or {}).get("name") or "").strip().lower()
+    email = str((user or {}).get("email") or "").strip().lower()
+    return (name or email, email)
+
+def _sorted_user_options(users):
+    normalized_users = []
+    for user in users or []:
+        email = str((user or {}).get("email") or "").strip().lower()
+        if not email:
+            continue
+        name = str((user or {}).get("name") or "").strip() or email
+        normalized_users.append({
+            **(user or {}),
+            "name": name,
+            "email": email,
+        })
+    normalized_users.sort(key=_user_sort_key)
+    user_lookup = {user["email"]: user for user in normalized_users}
+    user_options = [user["email"] for user in normalized_users]
+    return normalized_users, user_lookup, user_options
+
+def _user_option_label(email, user_lookup, include_email=True):
+    user = user_lookup.get(str(email or "").strip().lower()) or {}
+    name = str(user.get("name") or email or "").strip()
+    email_value = str(user.get("email") or email or "").strip().lower()
+    if include_email and email_value:
+        return f"{name} | {email_value}"
+    return name or email_value
+
 def _parse_iso_datetime(value):
     if not value:
         return None
@@ -5126,7 +5156,10 @@ def admin_dashboard():
                 reqs = []
                 st.error(f"Could not load requests: {e}")
             if reqs:
-                req_emails = [r["email"] for r in reqs]
+                req_emails = sorted(
+                    [str(r.get("email") or "").strip().lower() for r in reqs if str(r.get("email") or "").strip()],
+                    key=lambda x: x.lower(),
+                )
                 selected_email = st.selectbox("Pending requests", req_emails)
                 temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
                 if st.button("Set Temporary Password"):
@@ -5195,17 +5228,17 @@ def admin_dashboard():
             _safe_dataframe(df_users, width="stretch")
             
             if not df_users.empty:
-                user_emails = df_users['email'].tolist()
-                users_lookup = {
-                    str(row.get("email") or "").strip().lower(): row
-                    for row in users_data
-                    if str(row.get("email") or "").strip()
-                }
+                _, users_lookup, user_emails = _sorted_user_options(users_data)
                 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.subheader("Reset Password")
-                    target_email = st.selectbox("Select User", user_emails, key="reset_sel")
+                    target_email = st.selectbox(
+                        "Select User",
+                        user_emails,
+                        format_func=lambda email: _user_option_label(email, users_lookup),
+                        key="reset_sel",
+                    )
                     reset_pw = st.text_input("New Password", type="password", key="reset_pw")
                     if st.button("Reset Password"):
                         reset_password(target_email, reset_pw)
@@ -5213,7 +5246,12 @@ def admin_dashboard():
                 
                 with col2:
                     st.subheader("Update Role")
-                    target_role_email = st.selectbox("Select User", user_emails, key="role_sel")
+                    target_role_email = st.selectbox(
+                        "Select User",
+                        user_emails,
+                        format_func=lambda email: _user_option_label(email, users_lookup),
+                        key="role_sel",
+                    )
                     role_choices = ["RPL", "ML", "Manager", "Admin", "Funder"]
                     existing_roles = get_user_roles(target_role_email) or ["RPL"]
                     new_role_update = st.multiselect("New Roles", role_choices, default=existing_roles, key="role_up")
@@ -5250,7 +5288,12 @@ def admin_dashboard():
 
                 with col3:
                     st.subheader("Update User Details")
-                    target_profile_email = st.selectbox("Select User", user_emails, key="profile_sel")
+                    target_profile_email = st.selectbox(
+                        "Select User",
+                        user_emails,
+                        format_func=lambda email: _user_option_label(email, users_lookup),
+                        key="profile_sel",
+                    )
                     selected_profile = users_lookup.get(str(target_profile_email).strip().lower(), {})
                     existing_profile_roles = get_user_roles(target_profile_email) or ["RPL"]
                     current_profile_name = str(selected_profile.get("name") or "")
@@ -5299,7 +5342,12 @@ def admin_dashboard():
 
                 with col4:
                     st.subheader("Delete User")
-                    target_del = st.selectbox("Select User", user_emails, key="del_sel")
+                    target_del = st.selectbox(
+                        "Select User",
+                        user_emails,
+                        format_func=lambda email: _user_option_label(email, users_lookup),
+                        key="del_sel",
+                    )
                     delete_reason = st.text_input("Reason for deletion", key="delete_reason")
                     delete_confirm = st.checkbox("I confirm this user deletion", key="delete_confirm")
                     if st.button("Delete User", type="primary"):
@@ -6573,7 +6621,7 @@ def data_request_page():
             "role": str(st.session_state.get("role") or "").strip(),
         }
 
-    user_options = sorted(user_map.keys(), key=lambda x: ((user_map.get(x) or {}).get("name", "").lower(), x))
+    _, user_map, user_options = _sorted_user_options(user_map.values())
     default_email = str(st.session_state.get("email") or "").strip().lower()
     if default_email not in user_options and user_options:
         default_email = user_options[0]
@@ -6589,7 +6637,7 @@ def data_request_page():
             "Name",
             user_options,
             index=user_options.index(st.session_state.get("data_request_name_select")) if st.session_state.get("data_request_name_select") in user_options else 0,
-            format_func=lambda email: (user_map.get(email) or {}).get("name", email),
+            format_func=lambda email: _user_option_label(email, user_map, include_email=False),
             key="data_request_name_select",
         )
         selected_email = c2.selectbox(
@@ -6709,7 +6757,7 @@ def data_request_page():
                 grant_target = st.selectbox(
                     "User",
                     user_options,
-                    format_func=lambda email: f"{(user_map.get(email) or {}).get('name', email)} | {email}",
+                    format_func=lambda email: _user_option_label(email, user_map),
                     key="temp_access_target_email",
                 )
                 grant_roles = st.multiselect("Temporary Roles", ["RPL", "ML", "Manager", "Admin"], key="temp_access_roles")
