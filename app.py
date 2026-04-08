@@ -3203,12 +3203,25 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
         return "".join(ch for ch in s if ch.isalnum())
 
     people_name_by_id = {}
+    people_age_by_id = {}
     for person_row in people:
         pid = person_row.get("id")
-        if pid is None:
-            continue
+        person_key = _id_key(pid) if pid is not None else ""
         p_name = _get_row_value(person_row, "name", "full_name", "Display Name", "email") or pid
-        people_name_by_id[_id_key(pid)] = str(p_name).strip()
+        if person_key:
+            people_name_by_id[person_key] = str(p_name).strip()
+        for age_key in ("c_age", "age", "Age", "participant_age", "age_years", "Age (years)"):
+            age_val = person_row.get(age_key)
+            if age_val is not None and str(age_val).strip():
+                if person_key:
+                    people_age_by_id[person_key] = age_val
+                break
+        if person_key and person_key not in people_age_by_id:
+            for dob_key in ("dob", "date_of_birth", "Date of Birth", "Birth date", "birth_date"):
+                dob_val = person_row.get(dob_key)
+                if dob_val is not None and str(dob_val).strip():
+                    people_age_by_id[person_key] = dob_val
+                    break
 
     def _extract_participant_refs(event_row):
         participant_keys = (
@@ -3387,7 +3400,62 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
         walks_delivered = len(region_events)
         participants = sum(_event_attendees(e) for e in region_events)
 
+    age_bucket_order = ["18-30", "30-40", "40-45", "45-65", "65-75", "75+"]
+
+    def _coerce_age_years(value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)) and not pd.isna(value):
+            age_num = int(float(value))
+            return age_num if 0 <= age_num <= 120 else None
+        text = str(value).strip()
+        if not text:
+            return None
+        match = re.search(r"(\d{1,3})", text)
+        if match:
+            age_num = int(match.group(1))
+            return age_num if 0 <= age_num <= 120 else None
+        dob = pd.to_datetime(text, errors="coerce", dayfirst=True)
+        if pd.isna(dob):
+            dob = pd.to_datetime(text, errors="coerce")
+        if pd.isna(dob):
+            return None
+        today = pd.Timestamp.now(tz=dob.tz) if getattr(dob, "tzinfo", None) else pd.Timestamp.now()
+        age_num = int((today - dob).days // 365.25)
+        return age_num if 0 <= age_num <= 120 else None
+
+    def _age_bucket_for(value):
+        age_num = _coerce_age_years(value)
+        if age_num is None or age_num < 18:
+            return None
+        if age_num < 30:
+            return "18-30"
+        if age_num < 40:
+            return "30-40"
+        if age_num < 45:
+            return "40-45"
+        if age_num < 65:
+            return "45-65"
+        if age_num < 75:
+            return "65-75"
+        return "75+"
+
+    def _extract_attendee_age_bucket(attendee):
+        for key in ("c_age", "age", "Age", "participant_age", "age_years", "Age (years)"):
+            bucket = _age_bucket_for(_get_row_value(attendee, key))
+            if bucket:
+                return bucket
+        for key in ("dob", "date_of_birth", "Date of Birth", "Birth date", "birth_date"):
+            bucket = _age_bucket_for(_get_row_value(attendee, key))
+            if bucket:
+                return bucket
+        person_key = _id_key(attendee.get("person_id"))
+        if person_key and person_key in people_age_by_id:
+            return _age_bucket_for(people_age_by_id.get(person_key))
+        return None
+
     attendee_gender_demographics = {}
+    attendee_age_demographics = {}
     seen_attendees = set()
     for event in region_events:
         event_id = str(event.get("id") or "")
@@ -3401,6 +3469,9 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
             seen_attendees.add(attendee_key)
             label = _normalize_gender(_get_row_value(attendee, "c_gender", "Gender", "gender"))
             attendee_gender_demographics[label] = attendee_gender_demographics.get(label, 0) + 1
+            age_bucket = _extract_attendee_age_bucket(attendee)
+            if age_bucket:
+                attendee_age_demographics[age_bucket] = attendee_age_demographics.get(age_bucket, 0) + 1
 
     # Delivery demographics from currently available fields.
     # Priority 1: event attendee gender
@@ -3425,9 +3496,14 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
             if any(k in person_text for k in keywords):
                 people_tag_demographics[label] = people_tag_demographics.get(label, 0) + 1
 
-    if attendee_gender_demographics:
-        delivery_demographics = attendee_gender_demographics
-        delivery_demographics_source = "event_attendee_gender"
+    if attendee_gender_demographics or attendee_age_demographics:
+        delivery_demographics = {}
+        for label, count in attendee_gender_demographics.items():
+            delivery_demographics[label] = count
+        for label in age_bucket_order:
+            if attendee_age_demographics.get(label):
+                delivery_demographics[label] = attendee_age_demographics[label]
+        delivery_demographics_source = "event_attendee_demographics"
     elif people_tag_demographics:
         delivery_demographics = people_tag_demographics
         delivery_demographics_source = "people_type_tags"
@@ -3435,8 +3511,8 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
         delivery_demographics = event_type_counts
         delivery_demographics_source = "event_type_split"
     else:
-        delivery_demographics = {"General": participants if participants > 0 else 1}
-        delivery_demographics_source = "fallback"
+        delivery_demographics = {"Unknown": participants if participants > 0 else 0}
+        delivery_demographics_source = "unknown"
 
     return {
         "region": region,
@@ -3522,7 +3598,7 @@ def get_mock_data(region):
             "participants": 320,
             "bursary_participants": 15,
             "wellbeing_change_score": 1.4,
-            "demographics": {"Men": 20, "Young Adults": 30, "Carers": 15, "Ethnic Minorities": 10, "General": 25}
+            "demographics": {"Unknown": 320}
         },
         "income": {
             "bids_submitted": 5,
@@ -6081,14 +6157,14 @@ def main_dashboard():
         demo_source = (data.get("delivery") or {}).get("demographics_source", "fallback")
         st.caption("Charts are disabled on KPI Dashboard. Use Custom Reports Dashboard for charts.")
         _safe_dataframe(df_demo, width="stretch", hide_index=True)
-        if demo_source == "event_attendee_gender":
-            st.caption("Demographics shown from attendee Gender values synced from Beacon and normalized into dashboard groupings.")
+        if demo_source == "event_attendee_demographics":
+            st.caption("Demographics shown from attendee gender and age values synced from Beacon and normalized into dashboard groupings.")
         elif demo_source == "people_type_tags":
             st.caption("Demographics shown from existing people type tags in the filtered region/timeframe.")
         elif demo_source == "event_type_split":
             st.caption("No participant cohort tags found; chart falls back to event type split.")
         else:
-            st.caption("Limited demographic fields currently available; chart uses fallback data.")
+            st.caption("Limited demographic fields are currently available; unknown values are shown where no age or gender data is present.")
         st.caption("Click a metric above to open its drill-down popup.")
 
     # --- D. Income ---
