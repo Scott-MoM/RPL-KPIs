@@ -3503,6 +3503,9 @@ def compute_kpis(region, people, organisations, events, payments, grants, event_
         for label in age_bucket_order:
             if attendee_age_demographics.get(label):
                 delivery_demographics[label] = attendee_age_demographics[label]
+        unknown_age_count = max(0, len(seen_attendees) - sum(attendee_age_demographics.values()))
+        if unknown_age_count:
+            delivery_demographics["Unknown Age"] = unknown_age_count
         delivery_demographics_source = "event_attendee_demographics"
     elif people_tag_demographics:
         delivery_demographics = people_tag_demographics
