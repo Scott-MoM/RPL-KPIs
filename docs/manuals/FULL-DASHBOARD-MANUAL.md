@@ -89,6 +89,7 @@ Use `KPI Dashboard` for:
 - headline KPI review
 - checking delivery, governance, and partnerships
 - opening drill-downs behind KPI cards
+- reviewing separate `Gender` and `Age` demographics cards in the `Delivery` section
 
 Typical workflow:
 
@@ -99,6 +100,13 @@ Typical workflow:
 5. Open drill-downs where needed.
 
 Use this screen first when you want the fastest answer.
+
+In the `Delivery` section:
+
+- the `Gender` card can include `Men`, `Women`, `Trans / Non-binary / Gender diverse`, `Prefer not to say`, and `Unknown / Not provided`
+- the `Age` card can include `18-30`, `30-40`, `40-45`, `45-65`, `65-75`, `75+`, and `Unknown Age`
+
+If `Unknown Age` appears, attendee records exist but age data is missing or unusable for some or all of the filtered rows.
 
 ### 4.2 Custom Reports Dashboard
 ![Custom reports annotated guide](images/custom-reports-guide.svg)

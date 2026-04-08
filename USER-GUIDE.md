@@ -169,15 +169,33 @@ Participant-level detail depends on role and source data.
 - if source data contains only counts, even detail-access roles may see limited placeholders rather than full names
 
 ## 8. Delivery demographics
-The `Delivery` area may include a demographics chart.
+The `Delivery` area includes separate demographics cards for `Gender` and `Age`.
 
-The chart title helps explain the source:
+The `Gender` card may show:
 
-- `Participant Cohorts (from people type tags)` when people-tag data is available
-- `Delivery Split (by event type)` when cohort tags are missing
-- a fallback representation when only limited demographic data is available
+- `Men`
+- `Women`
+- `Trans / Non-binary / Gender diverse`
+- `Prefer not to say`
+- `Unknown / Not provided`
 
-Read the chart title carefully before using the result in reporting.
+The `Age` card may show:
+
+- `18-30`
+- `30-40`
+- `40-45`
+- `45-65`
+- `65-75`
+- `75+`
+- `Unknown Age`
+
+The source caption below the cards explains where the values came from:
+
+- attendee gender and age values synced from Beacon
+- people type tags where attendee demographic fields are not available
+- event type split when participant cohort tagging is missing
+
+If `Unknown Age` appears, attendee records exist but usable age values are missing for some or all of them.
 
 ## 9. Custom Reports Dashboard
 Use `Custom Reports Dashboard` when KPI cards are not detailed enough.

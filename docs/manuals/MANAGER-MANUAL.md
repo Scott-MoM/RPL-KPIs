@@ -147,6 +147,22 @@ Depending on the region context, the sections can include:
 
 The section selector is important. If a number seems to be missing, first confirm that you are in the correct section.
 
+In the `Delivery` section, demographics are split into separate `Gender` and `Age` cards.
+
+The `Gender` card can include `Men`, `Women`, `Trans / Non-binary / Gender diverse`, `Prefer not to say`, and `Unknown / Not provided`.
+
+The `Age` card can include:
+
+- `18-30`
+- `30-40`
+- `40-45`
+- `45-65`
+- `65-75`
+- `75+`
+- `Unknown Age`
+
+If `Unknown Age` appears, attendee rows are present but no usable age value has been synced for some or all of the selected records.
+
 ### 6.3 Step-by-step KPI review
 1. Open `KPI Dashboard`.
 2. Set the relevant region.

@@ -180,7 +180,27 @@ When a drill-down opens:
 3. Look for obvious issues such as duplicates, missing categories, or surprising dates.
 4. If the answer still is not clear, move to `Custom Reports Dashboard` and rebuild the question in a more structured way.
 
-### 6.5 Privacy limits for RPL users
+### 6.5 Demographics on KPI Dashboard
+The `Delivery` section shows demographics in two separate cards:
+
+- `Gender`
+- `Age`
+
+The `Gender` card can include `Men`, `Women`, `Trans / Non-binary / Gender diverse`, `Prefer not to say`, and `Unknown / Not provided`.
+
+The `Age` card can include:
+
+- `18-30`
+- `30-40`
+- `40-45`
+- `45-65`
+- `65-75`
+- `75+`
+- `Unknown Age`
+
+If `Unknown Age` appears, attendee rows exist but usable age values are missing for some or all records in the filtered selection.
+
+### 6.6 Privacy limits for RPL users
 RPL users should not see personal data.
 
 That means you should not expect to see:
@@ -194,7 +214,7 @@ That means you should not expect to see:
 
 You may still see summary-level counts and reporting totals. This is intentional. It allows regional monitoring while protecting privacy.
 
-### 6.6 Good KPI habits
+### 6.7 Good KPI habits
 Use these habits consistently:
 
 - check the region before discussing a number
