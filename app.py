@@ -6158,7 +6158,13 @@ def main_dashboard():
         st.subheader("Demographics")
         demo_items = list((data["delivery"].get("demographics") or {}).items())
         age_groups = {"18-30", "30-40", "40-45", "45-65", "65-75", "75+", "Unknown Age"}
-        gender_groups = {"Men", "Women", "Mixed / Other", "Unknown / Not provided"}
+        gender_groups = {
+            "Men",
+            "Women",
+            "Trans / Non-binary / Gender diverse",
+            "Prefer not to say",
+            "Unknown / Not provided",
+        }
         gender_demo = [(group, count) for group, count in demo_items if str(group) in gender_groups]
         age_demo = [(group, count) for group, count in demo_items if str(group) in age_groups]
         df_gender_demo = pd.DataFrame(gender_demo, columns=["Group", "Count"])
