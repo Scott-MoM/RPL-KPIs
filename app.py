@@ -3712,6 +3712,51 @@ def _fetch_supabase_rows(table, columns, date_field=None, start_iso=None, end_is
         offset += batch_size
     return rows
 
+@st.cache_data(show_spinner=False, ttl=120)
+def fetch_audit_logs(batch_size=1000, max_retries=4):
+    if DB_TYPE != 'supabase':
+        return []
+    rows = []
+    offset = 0
+    while True:
+        attempt = 0
+        while True:
+            try:
+                chunk = (
+                    DB_CLIENT.table("audit_logs")
+                    .select("*")
+                    .order("created_at", desc=True)
+                    .range(offset, offset + batch_size - 1)
+                    .execute()
+                    .data
+                    or []
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                retriable = any(
+                    token in msg
+                    for token in (
+                        "502",
+                        "bad gateway",
+                        "json could not be generated",
+                        "timeout",
+                        "timed out",
+                        "connection reset",
+                        "temporarily unavailable",
+                    )
+                )
+                if retriable and attempt < max_retries:
+                    time.sleep(min(8, 1.5 * (2 ** attempt)))
+                    attempt += 1
+                    continue
+                raise
+        rows.extend(chunk)
+        if len(chunk) < batch_size:
+            break
+        offset += batch_size
+    return rows
+
 def _rows_to_payloads(rows, date_field=None, region_field=None):
     payloads = []
     for row in rows:
@@ -5619,56 +5664,55 @@ def admin_dashboard():
     st.markdown("---")
     with st.expander("System Audit Log", expanded=False):
         if DB_TYPE == 'supabase':
-            # 1. Build Query
-            query = DB_CLIENT.table("audit_logs").select("*").order("created_at", desc=True).limit(200)
-
-            # 2. Fetch & Display
             try:
-                resp = query.execute()
-                data = resp.data
-                
+                data = fetch_audit_logs()
+
                 if data:
                     df_log = pd.DataFrame(data)
+                    for col in ["created_at", "user_email", "action", "details", "region"]:
+                        if col not in df_log.columns:
+                            df_log[col] = ""
                     if "details" not in df_log.columns:
                         df_log["details"] = ""
                     df_log["details_norm"] = df_log["details"].apply(
                         lambda d: json.dumps(d, sort_keys=True, default=str) if isinstance(d, (dict, list)) else str(d)
                     )
+                    df_log["created_at_display"] = pd.to_datetime(
+                        df_log["created_at"], errors="coerce"
+                    ).dt.strftime("%d/%m/%Y %H:%M:%S")
+                    df_log["created_at_display"] = df_log["created_at_display"].fillna(
+                        df_log["created_at"].astype(str)
+                    )
 
                     # Search & Filter Controls
                     col_search, col_filter = st.columns([3, 1])
                     search_term = col_search.text_input(
-                        "Search Logs (User, Action, or Details)",
+                        "Search Logs",
                         placeholder="e.g. 'Data Sync Completed' or 'scott@...'"
                     )
                     action_options = ["All"] + sorted(df_log["action"].dropna().astype(str).unique().tolist())
                     action_filter = col_filter.selectbox("Filter by Action", action_options)
                     if action_filter != "All":
                         df_log = df_log[df_log["action"] == action_filter]
-                    df_log = df_log[df_log["action"] != "Data Sync Progress"]
-                    df_log = df_log[~df_log["action"].isin(["Dashboard Filter Changed", "Dashboard View Changed"])]
-
-                    # Convert timestamps to readable format
-                    df_log['created_at'] = pd.to_datetime(df_log['created_at'], errors='coerce').dt.strftime('%d/%m/%Y')
                     
                     # Client-side Search (for flexibility with JSON/Text columns)
                     if search_term:
-                        search_term = search_term.lower()
+                        search_term = search_term.strip().lower()
                         mask = (
-                            df_log['user_email'].str.lower().str.contains(search_term) |
-                            df_log['action'].str.lower().str.contains(search_term) |
-                            df_log['details'].astype(str).str.lower().str.contains(search_term)
+                            df_log["created_at_display"].astype(str).str.lower().str.contains(search_term, na=False, regex=False) |
+                            df_log["user_email"].astype(str).str.lower().str.contains(search_term, na=False, regex=False) |
+                            df_log["action"].astype(str).str.lower().str.contains(search_term, na=False, regex=False) |
+                            df_log["details_norm"].astype(str).str.lower().str.contains(search_term, na=False, regex=False) |
+                            df_log["region"].astype(str).str.lower().str.contains(search_term, na=False, regex=False)
                         )
                         df_log = df_log[mask]
 
-                    if not df_log.empty:
-                        df_log = df_log.drop_duplicates(
-                            subset=["user_email", "action", "details_norm", "region"],
-                            keep="first"
-                        )
+                    st.caption(f"Showing {len(df_log):,} of {len(data):,} Supabase audit log rows.")
 
                     _safe_dataframe(
-                        df_log[['created_at', 'user_email', 'action', 'details', 'region']], 
+                        df_log[["created_at_display", "user_email", "action", "details", "region"]].rename(
+                            columns={"created_at_display": "created_at"}
+                        ),
                         width="stretch",
                         hide_index=True
                     )
