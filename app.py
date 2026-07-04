@@ -1741,10 +1741,14 @@ def fetch_live_event_attendees(event_id):
     for endpoint in endpoint_candidates:
         try:
             url = _build_beacon_url(beacon_base_url, beacon_account_id, endpoint)
-            for page in range(1, 11):
+            page = 1
+            per_page = 100
+            fetched_rows = 0
+            seen_page_signatures = set()
+            while True:
                 params = {
                     "page": page,
-                    "per_page": 100,
+                    "per_page": per_page,
                     "sort_by": "created_at",
                     "sort_direction": "desc",
                     "event_id": target,
@@ -1756,6 +1760,13 @@ def fetch_live_event_attendees(event_id):
                 rows = _extract_result_list(payload)
                 if not rows:
                     break
+                page_signature = tuple(
+                    str(_get_row_value(_extract_entity(raw), "id", "record_id", "Record ID") or raw) for raw in rows
+                )
+                if page_signature in seen_page_signatures:
+                    break
+                seen_page_signatures.add(page_signature)
+                fetched_rows += len(rows)
                 for raw in rows:
                     att = _extract_entity(raw)
                     att_event_id = _attendee_event_id(att)
@@ -1773,8 +1784,15 @@ def fetch_live_event_attendees(event_id):
                         if nk not in seen_names:
                             seen_names.add(nk)
                             found_names.append(n)
-                if len(rows) < 100:
+                if len(rows) < per_page:
                     break
+                total = _extract_total_count(payload)
+                if isinstance(total, int) and fetched_rows >= total:
+                    break
+                current_page, total_pages = _extract_page_progress(payload)
+                if isinstance(current_page, int) and isinstance(total_pages, int) and current_page >= total_pages:
+                    break
+                page += 1
             if found_names or found_ids:
                 return {"names": found_names, "ids": found_ids, "endpoint": endpoint}
         except Exception:
@@ -1811,7 +1829,7 @@ def _extract_region_tags(record):
             out.append(s)
     return out
 
-def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50, max_pages=200, should_cancel=None):
+def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50, max_pages=None, should_cancel=None):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -1819,7 +1837,8 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50,
     }
     all_rows = []
     page = 1
-    while page <= max_pages:
+    seen_page_signatures = set()
+    while max_pages is None or page <= max_pages:
         if should_cancel and should_cancel():
             raise SyncCancelledError("Manual sync cancelled by user.")
         url = _build_beacon_url(base_url, account_id, endpoint)
@@ -1850,6 +1869,10 @@ def _fetch_beacon_entities(base_url, api_key, account_id, endpoint, per_page=50,
         rows = _extract_result_list(payload)
         if not rows:
             break
+        page_signature = tuple(str(_get_row_value(_extract_entity(row), "id", "record_id", "Record ID") or row) for row in rows)
+        if page_signature in seen_page_signatures:
+            break
+        seen_page_signatures.add(page_signature)
         all_rows.extend(rows)
         if len(rows) < per_page:
             break

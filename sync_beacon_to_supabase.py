@@ -95,7 +95,7 @@ def extract_entity(record):
     return record
 
 
-def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pages=200):
+def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pages=None):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -103,7 +103,8 @@ def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pag
     }
     all_rows = []
     page = 1
-    while page <= max_pages:
+    seen_page_signatures = set()
+    while max_pages is None or page <= max_pages:
         url = build_beacon_url(endpoint, account_id, base_url=base_url)
         params = {
             "page": page,
@@ -130,6 +131,10 @@ def fetch_all(endpoint, api_key, account_id, base_url=None, per_page=50, max_pag
         rows = extract_results(data)
         if not rows:
             break
+        page_signature = tuple(str(extract_entity(row).get("id") or extract_entity(row).get("record_id") or extract_entity(row).get("Record ID") or row) for row in rows)
+        if page_signature in seen_page_signatures:
+            break
+        seen_page_signatures.add(page_signature)
         all_rows.extend(rows)
         if len(rows) < per_page:
             break
