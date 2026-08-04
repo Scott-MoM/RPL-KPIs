@@ -21,12 +21,16 @@ from supabase import create_client, Client
 USER_DB_FILE = 'usersAuth.json'
 CASE_STUDIES_FILE = 'case_studies.json'
 
+def get_secret(key_name):
+    """Helper to get secrets from st.secrets or os.environ"""
+    if hasattr(st, 'secrets') and key_name in st.secrets:
+        return st.secrets[key_name]
+    return os.environ.get(key_name)
+
 # Robustly determine DB_TYPE (check environment first, then st.secrets, fallback to supabase)
-if 'DB_TYPE' in os.environ:
-    DB_TYPE = os.environ['DB_TYPE']
-elif hasattr(st, 'secrets') and 'DB_TYPE' in st.secrets:
-    DB_TYPE = st.secrets['DB_TYPE']
-elif hasattr(st, 'secrets') and 'SUPABASE_URL' in st.secrets:
+if get_secret('DB_TYPE'):
+    DB_TYPE = get_secret('DB_TYPE')
+elif get_secret('SUPABASE_URL'):
     DB_TYPE = 'supabase' # Auto-detect Supabase credentials
 else:
     DB_TYPE = 'supabase' # Default to Supabase as requested
@@ -57,10 +61,12 @@ def get_db_connection():
     """Get database connection using standard anon key"""
     if DB_TYPE == 'supabase':
         try:
-            url = st.secrets.get("SUPABASE_URL")
-            key = st.secrets.get("SUPABASE_KEY")
+            url = get_secret("SUPABASE_URL")
+            key = get_secret("SUPABASE_KEY")
             if url and key:
                 return create_client(url, key)
+            else:
+                st.error("Database credentials (URL/KEY) not found in secrets or environment.")
         except Exception as e:
             st.error(f"Supabase connection error: {e}")
             pass
@@ -90,13 +96,13 @@ def reset_password(email, new_password):
     
     if DB_TYPE == 'supabase':
         try:
-            admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
+            admin_key = get_secret("SUPABASE_SERVICE_KEY")
             if not admin_key:
                 st.error("Admin service key not configured. Cannot reset password.")
                 return
             
             # ALWAYS use admin_db to bypass Row Level Security when updating users
-            admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
+            admin_db = create_client(get_secret("SUPABASE_URL"), admin_key)
             
             # Get user ID from email using admin_db
             role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
@@ -439,13 +445,13 @@ def password_change_page():
         # Update password in database
         try:
             if DB_TYPE == 'supabase':
-                admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
+                admin_key = get_secret("SUPABASE_SERVICE_KEY")
                 if not admin_key:
                     st.error("Admin service key not configured")
                     return
                 
                 # Must use admin client to bypass RLS when updating passwords
-                admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
+                admin_db = create_client(get_secret("SUPABASE_URL"), admin_key)
                 
                 # Get user ID
                 role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
