@@ -20,11 +20,16 @@ from supabase import create_client, Client
 # --- CONFIGURATION ---
 USER_DB_FILE = 'usersAuth.json'
 CASE_STUDIES_FILE = 'case_studies.json'
-DB_TYPE = os.getenv('DB_TYPE', 'local')
+
+# Robustly determine DB_TYPE (check environment first, then st.secrets, fallback to local)
+if 'DB_TYPE' in os.environ:
+    DB_TYPE = os.environ['DB_TYPE']
+elif hasattr(st, 'secrets') and 'DB_TYPE' in st.secrets:
+    DB_TYPE = st.secrets['DB_TYPE']
+else:
+    DB_TYPE = 'local'
 
 st.set_page_config(page_title="Regional KPI Dashboard", layout="wide")
-
-# --- AUTHENTICATION FUNCTIONS ---
 
 def load_local_json(filepath, default=None):
     """Load JSON from local file"""
@@ -47,14 +52,15 @@ def save_local_json(filepath, data):
         st.error(f"Error saving to {filepath}: {e}")
 
 def get_db_connection():
-    """Get database connection"""
+    """Get database connection using standard anon key"""
     if DB_TYPE == 'supabase':
         try:
             url = st.secrets.get("SUPABASE_URL")
             key = st.secrets.get("SUPABASE_KEY")
             if url and key:
                 return create_client(url, key)
-        except Exception:
+        except Exception as e:
+            st.error(f"Supabase connection error: {e}")
             pass
     return None
 
@@ -84,15 +90,16 @@ def reset_password(email, new_password):
         try:
             admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
             if not admin_key:
-                st.error("Admin service key not configured")
+                st.error("Admin service key not configured. Cannot reset password.")
                 return
             
+            # ALWAYS use admin_db to bypass Row Level Security when updating users
             admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
             
-            # Get user ID from email using admin_db to bypass RLS
+            # Get user ID from email using admin_db
             role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
             if not role_resp.data:
-                st.error(f"User {email} not found")
+                st.error(f"User {email} not found in user_roles table.")
                 return
             
             user_id = role_resp.data[0]["user_id"]
@@ -112,13 +119,13 @@ def reset_password(email, new_password):
             
             st.success(f"✅ Temporary password set for {email}. User will be prompted to change it on next login.")
         except Exception as e:
-            # Handle weak password constraints from Supabase
+            # Handle weak password constraints gracefully
             if "WeakPassword" in str(e) or "Password should contain at least one" in str(e) or "at least 6 characters" in str(e):
                 st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
             else:
                 st.error(f"We encountered an issue updating the password: {e}")
     else:
-        # Local mode
+        # Local mode fallback
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
         
@@ -135,7 +142,7 @@ def reset_password(email, new_password):
                 st.success(f"✅ Temporary password set for {email}. User will be prompted to change it on next login.")
                 return
         
-        st.error(f"User {email} not found")
+        st.error(f"User {email} not found locally.")
 
 def verify_user(email, password):
     """Verify user credentials and return must_change_password flag"""
@@ -149,17 +156,19 @@ def verify_user(email, password):
         try:
             db = get_db_connection()
             if not db:
-                return "error", None, None, None, None
+                return "connection_error", None, None, None, None
             
             auth_resp = db.auth.sign_in_with_password({"email": email, "password": password})
             if not auth_resp or not auth_resp.user:
-                return "user_not_found", None, None, None, None
+                return "user_not_found_in_auth", None, None, None, None
             
             user_id = auth_resp.user.id
             
+            # Fetch user roles
             role_resp = db.table('user_roles').select("region, name, must_change_password, roles(name)").eq("user_id", user_id).execute()
             if not role_resp.data:
-                return "user_not_found", None, None, None, None
+                # The user successfully authenticated, but doesn't exist in the user_roles table
+                return "missing_role", None, None, None, None
             
             rows = role_resp.data
             role_names = []
@@ -199,9 +208,8 @@ def verify_user(email, password):
                 
                 return "wrong_password", None, None, None, None
         
-        return "user_not_found", None, None, None, None
+        return "user_not_found_local", None, None, None, None
 
-# --- UI THEME / STYLES ---
 def inject_global_styles():
     st.markdown(
         """
@@ -390,8 +398,6 @@ def inject_global_styles():
         unsafe_allow_html=True
     )
 
-# --- UI PAGES ---
-
 def password_change_page():
     """Page for users to change their temporary password"""
     inject_global_styles()
@@ -399,7 +405,7 @@ def password_change_page():
     st.info("Your administrator has set a temporary password. Please create a new permanent password below.")
     
     with st.form("password_change_form"):
-        # The temporary password field has been removed to avoid confusion.
+        # Temporary Password field has been removed for a better user experience!
         new_password = st.text_input(
             "New Password",
             type="password",
@@ -436,9 +442,10 @@ def password_change_page():
                     st.error("Admin service key not configured")
                     return
                 
+                # Must use admin client to bypass RLS when updating passwords
                 admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
                 
-                # Get user ID using admin_db to bypass RLS
+                # Get user ID
                 role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
                 if role_resp.data:
                     user_id = role_resp.data[0]["user_id"]
@@ -471,15 +478,18 @@ def password_change_page():
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            # Handle weak password constraints from Supabase
+            # Handle weak passwords gracefully
             if "WeakPassword" in str(e) or "Password should contain at least one" in str(e) or "at least 6 characters" in str(e):
                 st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
             else:
-                st.error(f"We encountered an issue updating the password: {e}")
+                st.error(f"❌ Password update failed: {e}")
 
 def login_page():
     """Login page with password reset flow"""
     inject_global_styles()
+    
+    # Show active Database connection mode for diagnostic purposes
+    st.caption(f"Status: Operating in {DB_TYPE.upper()} mode")
     
     st.markdown("## 🔑 Login")
     
@@ -508,12 +518,18 @@ def login_page():
             st.rerun()
         elif auth_status == "missing_fields":
             st.error("❌ Please enter your email and password.")
-        elif auth_status == "user_not_found":
-            st.error("❌ User not found.")
         elif auth_status == "wrong_password":
             st.error("❌ Invalid password.")
+        elif auth_status == "missing_role":
+            st.error("❌ Login successful, but your account is missing permissions in the 'user_roles' table. Please contact your administrator.")
+        elif auth_status == "user_not_found_in_auth":
+            st.error("❌ Account not found in the authentication system. Check your email or contact support.")
+        elif auth_status == "user_not_found_local":
+            st.error("❌ Account not found in the local configuration.")
+        elif auth_status == "connection_error":
+            st.error("❌ Failed to connect to the database. Check your configuration secrets.")
         else:
-            st.error("❌ Login error. Please try again.")
+            st.error("❌ Login error. Please try again or contact support.")
 
 def admin_dashboard():
     """Admin panel with user management and password reset"""
@@ -526,24 +542,20 @@ def admin_dashboard():
     
     if DB_TYPE == 'supabase':
         try:
-            admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
-            if admin_key:
-                # Use admin_db so we can list ALL users, bypassing any RLS rules
-                admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
-                users_resp = admin_db.table('user_roles').select("email").execute()
+            db = get_db_connection()
+            if db:
+                users_resp = db.table('user_roles').select("email").execute()
                 user_emails = list(set([u.get('email') for u in users_resp.data if u.get('email')]))
-            else:
-                st.error("Admin service key not configured")
         except Exception as e:
             st.error(f"Failed to load users: {e}")
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         user_emails = [u.get('email') for u in db_data.get("users", []) if u.get('email')]
-    
+        
     if not user_emails:
         st.warning("No users found in the system.")
         return
-    
+        
     user_emails.sort()
     
     col1, col2 = st.columns(2)
@@ -561,18 +573,18 @@ def admin_dashboard():
             elif len(reset_pw) < 8:
                 st.error("❌ Password must be at least 8 characters long.")
             else:
+                # The reset_password helper automatically catches weak password errors and alerts the user
                 reset_password(target_email, reset_pw)
-    
+
     with col2:
         st.subheader("📋 Pending Password Resets")
         st.markdown("Users who need to change their temporary password on next login.")
         
         if DB_TYPE == 'supabase':
             try:
-                admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
-                if admin_key:
-                    admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
-                    pending = admin_db.table('user_roles').select("email").eq("must_change_password", True).execute()
+                db = get_db_connection()
+                if db:
+                    pending = db.table('user_roles').select("email").eq("must_change_password", True).execute()
                     pending_users = [u.get('email') for u in pending.data if u.get('email')]
                     
                     if pending_users:
@@ -593,50 +605,3 @@ def admin_dashboard():
                     st.markdown(f"- {user}")
             else:
                 st.success("✅ No pending password changes.")
-
-def main():
-    """Main application entry point"""
-    inject_global_styles()
-    
-    # Check if user is logged in
-    if not st.session_state.get('logged_in', False):
-        login_page()
-        return
-    
-    # Check if user needs to change password
-    if st.session_state.get('force_password_change', False):
-        password_change_page()
-        return
-    
-    # Main dashboard
-    st.markdown(f"# Welcome, {st.session_state.get('name', 'User')}! 👋")
-    st.markdown(f"**Role:** {st.session_state.get('role', 'N/A')} | **Region:** {st.session_state.get('region', 'N/A')}")
-    
-    # Add logout and admin panel
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📊 Dashboard", use_container_width=True):
-            st.session_state['current_page'] = 'dashboard'
-    
-    with col2:
-        if st.session_state.get('role') == 'Admin' and st.button("👨‍💼 Admin Panel", use_container_width=True):
-            st.session_state['current_page'] = 'admin'
-    
-    with col3:
-        if st.button("🚪 Logout", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.session_state['force_password_change'] = False
-            st.rerun()
-    
-    # Route to appropriate page
-    current_page = st.session_state.get('current_page', 'dashboard')
-    
-    if current_page == 'admin' and st.session_state.get('role') == 'Admin':
-        admin_dashboard()
-    else:
-        st.markdown("### 📊 Dashboard Content")
-        st.info("Main dashboard content goes here")
-
-if __name__ == "__main__":
-    main()
