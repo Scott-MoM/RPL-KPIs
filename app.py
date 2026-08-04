@@ -456,12 +456,24 @@ def get_admin_client():
         key = None
         if "supabase" in st.secrets:
             url = st.secrets["supabase"].get("SUPABASE_URL") or st.secrets["supabase"].get("url")
-            key = st.secrets["supabase"].get("SUPABASE_SERVICE_KEY") or st.secrets["supabase"].get("SUPABASE_ANON_KEY") or st.secrets["supabase"].get("key")
+            key = (
+                st.secrets["supabase"].get("SUPABASE_SERVICE_KEY")
+                or st.secrets["supabase"].get("service_role_key")
+                or st.secrets["supabase"].get("SERVICE_ROLE_KEY")
+                or st.secrets["supabase"].get("SUPABASE_ANON_KEY")
+                or st.secrets["supabase"].get("key")
+            )
             
         if not url:
             url = st.secrets.get("SUPABASE_URL") or st.secrets.get("url")
         if not key:
-            key = st.secrets.get("SUPABASE_SERVICE_KEY") or st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("key")
+            key = (
+                st.secrets.get("SUPABASE_SERVICE_KEY")
+                or st.secrets.get("service_role_key")
+                or st.secrets.get("SERVICE_ROLE_KEY")
+                or st.secrets.get("SUPABASE_ANON_KEY")
+                or st.secrets.get("key")
+            )
             
         if url and key:
             return create_client(url, key)
@@ -2805,7 +2817,8 @@ def verify_user(email, password):
                         roles = _local_roles(user)
                         roles = _effective_roles_with_temp_access(email, roles)
                         primary_role = _primary_role_from_list(roles) or user.get('role')
-                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
+                        must_change = bool(user.get('must_change_password', False))
+                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), must_change, roles
                     return "wrong_password", None, None, None, None
 
                 try:
@@ -2813,7 +2826,8 @@ def verify_user(email, password):
                         roles = _local_roles(user)
                         roles = _effective_roles_with_temp_access(email, roles)
                         primary_role = _primary_role_from_list(roles) or user.get('role')
-                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), False, roles
+                        must_change = bool(user.get('must_change_password', False))
+                        return "success", primary_role, user.get('region', 'Global'), user.get('name', email), must_change, roles
                 except ValueError:
                     pass
                 return "wrong_password", None, None, None, None
@@ -3039,30 +3053,70 @@ def delete_user(email, audit_reason=None, audit_confirmed=False):
             db_data["users"] = new_list
             save_local_json(USER_DB_FILE, db_data)
 
-def reset_password(email, new_password):
+def reset_password(email, new_password, require_change=True):
     email = email.strip().lower()
     new_hash = pbkdf2_sha256.hash(new_password)
     
     if DB_TYPE == 'supabase':
         admin_client = get_admin_client()
         if not admin_client:
-            return
-        role_resp = admin_client.table('user_roles').select("user_id").eq('email', email).execute()
+            raise RuntimeError("Admin client not available. Check Supabase credentials.")
+        
+        # 1. Fetch user_id via case-insensitive email match in user_roles
+        role_resp = admin_client.table('user_roles').select("user_id").ilike('email', email).execute()
+        user_id = None
         if role_resp.data:
-            user_id = role_resp.data[0]["user_id"]
-            admin_client.auth.admin.update_user_by_id(user_id, {"password": new_password})
-            
-            # --- AUDIT LOG ---
-            log_audit_event("Password Reset", {"target_email": email})
+            user_id = role_resp.data[0].get("user_id")
+        
+        # 2. Fallback to auth admin user listing if user_roles missing
+        if not user_id:
+            try:
+                users_list = admin_client.auth.admin.list_users()
+                for u in (users_list or []):
+                    u_email = str(getattr(u, 'email', '') or '').strip().lower()
+                    if u_email == email:
+                        user_id = u.id
+                        break
+            except Exception:
+                pass
+
+        if not user_id:
+            raise ValueError(f"User profile for '{email}' not found in database.")
+
+        # 3. Update auth password (raises error if weak password or auth failure)
+        admin_client.auth.admin.update_user_by_id(user_id, {"password": new_password})
+        
+        # 4. Set must_change_password flag
+        admin_client.table("user_roles").update({"must_change_password": require_change}).ilike("email", email).execute()
+        if user_id:
+            admin_client.table("user_roles").update({"must_change_password": require_change}).eq("user_id", user_id).execute()
+
+        # 5. Mark pending reset requests as completed
+        try:
+            admin_client.table("password_reset_requests").update({"status": "completed"}).ilike("email", email).execute()
+        except Exception:
+            pass
+
+        # 6. Audit log
+        log_audit_event("Password Reset", {"target_email": email, "require_change": require_change})
+        return True
 
     else:
         db_data = load_local_json(USER_DB_FILE, {"users": []})
         users_list = db_data.get("users", [])
+        found = False
         for user in users_list:
             if user.get('email', '').strip().lower() == email:
                 user['password'] = new_hash
-                save_local_json(USER_DB_FILE, db_data)
-                return
+                user['must_change_password'] = require_change
+                found = True
+                break
+        if found:
+            save_local_json(USER_DB_FILE, db_data)
+            log_audit_event("Password Reset", {"target_email": email, "require_change": require_change})
+            return True
+        else:
+            raise ValueError(f"User '{email}' not found.")
 
 def get_all_users():
     if DB_TYPE == 'supabase':
@@ -5552,7 +5606,6 @@ def password_change_page():
     st.markdown("## Change Password")
     st.info("Please set a new password to continue.")
 
-    # FIX: The "Temporary Password" field has been completely removed to simplify the user flow.
     new_password = st.text_input("New Password", type="password")
     confirm_password = st.text_input("Confirm New Password", type="password")
 
@@ -5564,36 +5617,65 @@ def password_change_page():
             st.error("New passwords do not match.")
             return
 
-        email = st.session_state.get("email")
-        try:
-            admin_client = get_admin_client()
-            if not admin_client:
-                st.error("Admin client not available. Check Supabase secrets.")
-                return
-            
-            # Fetch the user_id without requiring the user to type the temporary password again
-            role_resp = admin_client.table('user_roles').select("user_id").eq('email', email).execute()
-            if not role_resp.data:
-                st.error("Could not locate your profile in the database.")
-                return
+        email = st.session_state.get("email", "").strip().lower()
+        if DB_TYPE == 'supabase':
+            try:
+                admin_client = get_admin_client()
+                if not admin_client:
+                    st.error("Admin client not available. Check Supabase secrets.")
+                    return
                 
-            user_id = role_resp.data[0]["user_id"]
+                # Fetch user_id via case-insensitive email match
+                role_resp = admin_client.table('user_roles').select("user_id").ilike('email', email).execute()
+                user_id = None
+                if role_resp.data:
+                    user_id = role_resp.data[0]["user_id"]
+                else:
+                    try:
+                        users_list = admin_client.auth.admin.list_users()
+                        for u in (users_list or []):
+                            if getattr(u, 'email', '').strip().lower() == email:
+                                user_id = u.id
+                                break
+                    except Exception:
+                        pass
 
-            # Update auth password (requires service role key)
-            admin_client.auth.admin.update_user_by_id(user_id, {"password": new_password})
+                if not user_id:
+                    st.error("Could not locate your profile in the database.")
+                    return
 
-            # Clear must_change_password flag
-            admin_client.table("user_roles").update({"must_change_password": False}).eq("user_id", user_id).execute()
+                # Update auth password
+                admin_client.auth.admin.update_user_by_id(user_id, {"password": new_password})
 
+                # Clear must_change_password flag
+                admin_client.table("user_roles").update({"must_change_password": False}).ilike("email", email).execute()
+                if user_id:
+                    admin_client.table("user_roles").update({"must_change_password": False}).eq("user_id", user_id).execute()
+
+                st.session_state['force_password_change'] = False
+                st.success("Password updated successfully. Please continue.")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                msg = str(e).lower()
+                if any(w in msg for w in ["weakpassword", "password should contain", "at least", "password is too weak", "password should be"]):
+                    st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
+                else:
+                    st.error(f"Password update failed: {e}")
+        else:
+            db_data = load_local_json(USER_DB_FILE, {"users": []})
+            users_list = db_data.get("users", [])
+            new_hash = pbkdf2_sha256.hash(new_password)
+            for user in users_list:
+                if user.get('email', '').strip().lower() == email:
+                    user['password'] = new_hash
+                    user['must_change_password'] = False
+                    save_local_json(USER_DB_FILE, db_data)
+                    break
             st.session_state['force_password_change'] = False
-            st.success("Password updated. Please continue.")
+            st.success("Password updated successfully. Please continue.")
+            time.sleep(1)
             st.rerun()
-        except Exception as e:
-            # FIX: If the user provides a weak password, display a friendly yellow warning.
-            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e):
-                st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
-            else:
-                st.error(f"Password update failed: {e}")
 
 def admin_dashboard():
     st.title("Admin Dashboard")
@@ -5620,28 +5702,23 @@ def admin_dashboard():
                 st.error(f"Could not load requests: {e}")
             if reqs:
                 req_emails = sorted(
-                    [str(r.get("email") or "").strip().lower() for r in reqs if str(r.get("email") or "").strip()],
+                    list(set(str(r.get("email") or "").strip().lower() for r in reqs if str(r.get("email") or "").strip())),
                     key=lambda x: x.lower(),
                 )
-                selected_email = st.selectbox("Pending requests", req_emails)
+                selected_email = st.selectbox("Pending requests", req_emails, key="admin_pending_reset_select")
                 temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
-                if st.button("Set Temporary Password"):
+                if st.button("Set Temporary Password", key="btn_set_temp_pw"):
                     if not temp_pw:
                         st.error("Please enter a temporary password.")
                     else:
                         try:
-                            user_row = admin_client.table("user_roles").select("user_id").eq("email", selected_email).execute()
-                            if not user_row.data:
-                                st.error("User not found for that email.")
-                            else:
-                                user_id = user_row.data[0]["user_id"]
-                                admin_client.auth.admin.update_user_by_id(user_id, {"password": temp_pw})
-                                admin_client.table("user_roles").update({"must_change_password": True}).eq("user_id", user_id).execute()
-                                admin_client.table("password_reset_requests").update({"status": "completed"}).eq("email", selected_email).execute()
-                                st.success("Temporary password set. User will be prompted to change it on next login.")
+                            reset_password(selected_email, temp_pw, require_change=True)
+                            st.success(f"Temporary password set for {selected_email}. User will be prompted to change it on next login.")
+                            time.sleep(1)
+                            st.rerun()
                         except Exception as e:
-                            # Catch weak temporary passwords here too
-                            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e):
+                            msg = str(e).lower()
+                            if any(w in msg for w in ["weakpassword", "password should contain", "at least", "password is too weak", "password should be"]):
                                 st.warning("That temporary password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
                             else:
                                 st.error(f"Failed to reset password: {e}")
@@ -5706,16 +5783,22 @@ def admin_dashboard():
                         key="reset_sel",
                     )
                     reset_pw = st.text_input("New Password", type="password", key="reset_pw")
-                    if st.button("Reset Password"):
-                        # FIX: Wrapping reset_password in try/except to catch weak password rules elegantly
-                        try:
-                            reset_password(target_email, reset_pw)
-                            st.success("Password updated.")
-                        except Exception as e:
-                            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e):
-                                st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
-                            else:
-                                st.error(f"Failed to reset password: {str(e)}")
+                    temp_flag = st.checkbox("Force password change on next login", value=True, key="reset_must_change_chk")
+                    if st.button("Reset Password", key="btn_reset_user_pw"):
+                        if not reset_pw:
+                            st.error("Please enter a new password.")
+                        else:
+                            try:
+                                reset_password(target_email, reset_pw, require_change=temp_flag)
+                                st.success(f"Password updated for {target_email}.")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e:
+                                msg = str(e).lower()
+                                if any(w in msg for w in ["weakpassword", "password should contain", "at least", "password is too weak", "password should be"]):
+                                    st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
+                                else:
+                                    st.error(f"Failed to reset password: {str(e)}")
                 
                 with col2:
                     st.subheader("Update Role")
