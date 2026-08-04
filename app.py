@@ -5606,10 +5606,12 @@ def password_change_page():
     st.markdown("## Change Password")
     st.info("Please set a new password to continue.")
 
-    new_password = st.text_input("New Password", type="password")
-    confirm_password = st.text_input("Confirm New Password", type="password")
+    with st.form("password_change_form"):
+        new_password = st.text_input("New Password", type="password", key="pwd_change_new")
+        confirm_password = st.text_input("Confirm New Password", type="password", key="pwd_change_confirm")
+        submitted = st.form_submit_button("Update Password")
 
-    if st.button("Update Password"):
+    if submitted:
         if not new_password or not confirm_password:
             st.warning("Please complete all fields.")
             return
@@ -5705,9 +5707,12 @@ def admin_dashboard():
                     list(set(str(r.get("email") or "").strip().lower() for r in reqs if str(r.get("email") or "").strip())),
                     key=lambda x: x.lower(),
                 )
-                selected_email = st.selectbox("Pending requests", req_emails, key="admin_pending_reset_select")
-                temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
-                if st.button("Set Temporary Password", key="btn_set_temp_pw"):
+                with st.form("admin_temp_pw_form"):
+                    selected_email = st.selectbox("Pending requests", req_emails, key="admin_pending_reset_select")
+                    temp_pw = st.text_input("Temporary Password", type="password", key="reset_temp_pw")
+                    btn_set_temp_pw = st.form_submit_button("Set Temporary Password")
+
+                if btn_set_temp_pw:
                     if not temp_pw:
                         st.error("Please enter a temporary password.")
                     else:
@@ -5776,15 +5781,18 @@ def admin_dashboard():
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.subheader("Reset Password")
-                    target_email = st.selectbox(
-                        "Select User",
-                        user_emails,
-                        format_func=lambda email: _user_option_label(email, users_lookup),
-                        key="reset_sel",
-                    )
-                    reset_pw = st.text_input("New Password", type="password", key="reset_pw")
-                    temp_flag = st.checkbox("Force password change on next login", value=True, key="reset_must_change_chk")
-                    if st.button("Reset Password", key="btn_reset_user_pw"):
+                    with st.form("admin_reset_user_pw_form"):
+                        target_email = st.selectbox(
+                            "Select User",
+                            user_emails,
+                            format_func=lambda email: _user_option_label(email, users_lookup),
+                            key="reset_sel",
+                        )
+                        reset_pw = st.text_input("New Password", type="password", key="reset_pw")
+                        temp_flag = st.checkbox("Force password change on next login", value=True, key="reset_must_change_chk")
+                        btn_reset_user_pw = st.form_submit_button("Reset Password")
+
+                    if btn_reset_user_pw:
                         if not reset_pw:
                             st.error("Please enter a new password.")
                         else:
