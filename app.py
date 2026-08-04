@@ -23,9 +23,21 @@ CASE_STUDIES_FILE = 'case_studies.json'
 
 def get_secret(key_name):
     """Helper to get secrets from st.secrets or os.environ"""
-    if hasattr(st, 'secrets') and key_name in st.secrets:
-        return st.secrets[key_name]
-    return os.environ.get(key_name)
+    try:
+        # First try Streamlit secrets
+        if hasattr(st, 'secrets') and key_name in st.secrets:
+            val = st.secrets[key_name]
+            if val:
+                return str(val).strip()
+    except Exception:
+        pass
+        
+    # Fallback to OS environment variables
+    env_val = os.environ.get(key_name)
+    if env_val:
+        return str(env_val).strip()
+        
+    return None
 
 # Robustly determine DB_TYPE (check environment first, then st.secrets, fallback to supabase)
 if get_secret('DB_TYPE'):
@@ -62,11 +74,13 @@ def get_db_connection():
     if DB_TYPE == 'supabase':
         try:
             url = get_secret("SUPABASE_URL")
-            key = get_secret("SUPABASE_KEY")
+            # Check for standard key, but fallback to Anon or Service key naming conventions
+            key = get_secret("SUPABASE_KEY") or get_secret("SUPABASE_ANON_KEY") or get_secret("SUPABASE_SERVICE_KEY")
+            
             if url and key:
                 return create_client(url, key)
             else:
-                st.error("Database credentials (URL/KEY) not found in secrets or environment.")
+                st.error(f"Database credentials not found. (URL found: {bool(url)}, Key found: {bool(key)}). Please ensure SUPABASE_URL and SUPABASE_ANON_KEY are set in your secrets.")
         except Exception as e:
             st.error(f"Supabase connection error: {e}")
             pass
