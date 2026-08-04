@@ -25,10 +25,18 @@ def get_secret(key_name):
     """Helper to get secrets from st.secrets or os.environ"""
     try:
         # First try Streamlit secrets
-        if hasattr(st, 'secrets') and key_name in st.secrets:
-            val = st.secrets[key_name]
-            if val:
-                return str(val).strip()
+        if hasattr(st, 'secrets'):
+            # Check root level
+            if key_name in st.secrets:
+                val = st.secrets[key_name]
+                if val:
+                    return str(val).strip()
+            
+            # Check nested [supabase] section (matches your secrets.toml)
+            if 'supabase' in st.secrets and key_name in st.secrets['supabase']:
+                val = st.secrets['supabase'][key_name]
+                if val:
+                    return str(val).strip()
     except Exception:
         pass
         
