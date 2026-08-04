@@ -605,3 +605,50 @@ def admin_dashboard():
                     st.markdown(f"- {user}")
             else:
                 st.success("✅ No pending password changes.")
+
+def main():
+    """Main application entry point"""
+    inject_global_styles()
+    
+    # Check if user is logged in
+    if not st.session_state.get('logged_in', False):
+        login_page()
+        return
+    
+    # Check if user needs to change password
+    if st.session_state.get('force_password_change', False):
+        password_change_page()
+        return
+    
+    # Main dashboard
+    st.markdown(f"# Welcome, {st.session_state.get('name', 'User')}! 👋")
+    st.markdown(f"**Role:** {st.session_state.get('role', 'N/A')} | **Region:** {st.session_state.get('region', 'N/A')}")
+    
+    # Add logout and admin panel
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📊 Dashboard", use_container_width=True):
+            st.session_state['current_page'] = 'dashboard'
+    
+    with col2:
+        if st.session_state.get('role') == 'Admin' and st.button("👨‍💼 Admin Panel", use_container_width=True):
+            st.session_state['current_page'] = 'admin'
+    
+    with col3:
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.session_state['force_password_change'] = False
+            st.rerun()
+    
+    # Route to appropriate page
+    current_page = st.session_state.get('current_page', 'dashboard')
+    
+    if current_page == 'admin' and st.session_state.get('role') == 'Admin':
+        admin_dashboard()
+    else:
+        st.markdown("### 📊 Dashboard Content")
+        st.info("Main dashboard content goes here")
+
+if __name__ == "__main__":
+    main()
