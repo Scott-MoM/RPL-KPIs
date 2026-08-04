@@ -5271,192 +5271,192 @@ def ml_dashboard():
         else:
             st.caption("No additional event information is available.")
     def funder_dashboard():
-    st.title("Funder Dashboard")
-    st.caption("GDPR-safe, aggregated metrics only. No personal data is shown.")
-
-    hour = datetime.now().hour
-    if hour < 12:
-        greeting = "Good morning"
-    elif hour < 18:
-        greeting = "Good afternoon"
-    else:
-        greeting = "Good evening"
-    st.sidebar.title(f"{greeting}, {st.session_state.get('name', 'User')}")
-    st.sidebar.info(f"Role: {st.session_state.get('role', 'Funder')}")
-
-    region_options = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
-    role = st.session_state.get("role")
-    assigned_scope = st.session_state.get("region") or "Global"
-    assigned_funder = _decode_funder_scope(assigned_scope)
-    if role == "Funder" and not assigned_funder and assigned_scope not in ("", "Global"):
-        assigned_funder = assigned_scope
-
-    c_region, c_tf = st.columns([1, 1])
-    with c_region:
-        if role == "Funder":
-            region_val = "Global"
-            st.caption("Region: Global")
+        st.title("Funder Dashboard")
+        st.caption("GDPR-safe, aggregated metrics only. No personal data is shown.")
+    
+        hour = datetime.now().hour
+        if hour < 12:
+            greeting = "Good morning"
+        elif hour < 18:
+            greeting = "Good afternoon"
         else:
-            default_index = region_options.index(assigned_scope) if assigned_scope in region_options else 0
-            region_val = st.selectbox("Region", region_options, index=default_index, key="funder_region")
-    with c_tf:
-        timeframe = st.selectbox("Timeframe", ["All Time", "Year", "Quarter", "Month", "Custom Range"], index=0, key="funder_timeframe")
-
-    today = pd.Timestamp.now().normalize()
-    start_date = None
-    end_date = None
-    if timeframe == "Year":
-        start_date = today - pd.DateOffset(years=1)
-        end_date = today
-    elif timeframe == "Quarter":
-        start_date = today - pd.DateOffset(months=3)
-        end_date = today
-    elif timeframe == "Month":
-        start_date = today - pd.DateOffset(months=1)
-        end_date = today
-    elif timeframe == "Custom Range":
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            custom_start = st.date_input("Start date", value=(today - pd.Timedelta(days=30)).date(), key="funder_start")
-        with cc2:
-            custom_end = st.date_input("End date", value=today.date(), key="funder_end")
-        if custom_end < custom_start:
-            st.error("End date must be on or after start date.")
-            return
-        start_date = pd.Timestamp(custom_start)
-        end_date = pd.Timestamp(custom_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-    data = fetch_funder_dashboard_data(
-        region_val,
-        start_date=start_date,
-        end_date=end_date,
-        include_summary=(role != "Funder"),
-    )
-    if not data:
-        st.error("No dashboard data is available for this public view.")
-        return
-
-    def _funder_key(value):
-        return _norm_key(value)
-
-    raw_income = data.get("_raw_income", {}) or {}
-    payments_all = raw_income.get("payments") or []
-    grants_all = raw_income.get("grants") or []
-    org_name_lookup = get_organisation_name_lookup()
-    funder_map = {}
-    for fname in get_assigned_funder_names():
-        fk = _funder_key(fname)
-        if fk and fk not in funder_map:
-            funder_map[fk] = fname
-    for row in payments_all + grants_all:
-        fname = _extract_funder_name(row, org_name_lookup=org_name_lookup)
-        fk = _funder_key(fname)
-        if fk and fk not in funder_map:
-            funder_map[fk] = fname
-
-    if role == "Funder":
-        selected_funder = assigned_funder or "Unknown / Not tagged"
-        selected_funder_key = _funder_key(selected_funder)
-        st.caption(f"Funder: {selected_funder}")
-    else:
-        funder_options = ["All Funders"] + sorted(funder_map.values(), key=lambda x: x.lower())
-        selected_funder = st.selectbox("Funder", funder_options, index=0, key="funder_selector")
-        selected_funder_key = _funder_key(selected_funder)
-
-    def _row_matches_funder(row):
-        if selected_funder == "All Funders":
-            return True
-        return _funder_key(_extract_funder_name(row, org_name_lookup=org_name_lookup)) == selected_funder_key
-
-    filtered_payments = [r for r in payments_all if _row_matches_funder(r)]
-    filtered_grants = [r for r in grants_all if _row_matches_funder(r)]
-
-    filtered_total_funds = sum(_coerce_money(r.get("amount")) for r in filtered_payments)
-    filtered_total_funds += sum(
-        _coerce_money(r.get("amount"))
-        for r in filtered_grants
-        if str(r.get("stage") or "").strip().lower() == "won"
-    )
-    filtered_bids_submitted = sum(
-        1
-        for r in filtered_grants
-        if any(x in str(r.get("stage") or "").lower() for x in ["submitted", "review", "pending"])
-    )
-
-    last_refresh = get_last_refresh_timestamp()
-    if last_refresh:
-        st.caption(f"Last Data Refresh (UTC): {last_refresh.strftime('%d/%m/%Y %H:%M')}")
-    else:
-        st.caption("Last Data Refresh (UTC): Unknown")
-
-    if role != "Funder":
-        g = data.get("governance", {})
-        p = data.get("partnerships", {})
-        d = data.get("delivery", {})
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Active Volunteers", _gdpr_safe_count(g.get("volunteers_new", 0)))
-        m2.metric("Active Organisations", _gdpr_safe_count(p.get("active_referrals", 0)))
-        m3.metric("Delivery Events", _gdpr_safe_count(d.get("walks_delivered", 0)))
-        m4, m5, m6 = st.columns(3)
-        m4.metric("Participants Reached", _gdpr_safe_count(d.get("participants", 0)))
-        m5.metric("Bids Submitted (Selected Funder)", _gdpr_safe_count(filtered_bids_submitted))
-        m6.metric("Total Funds Raised (Selected Funder)", f"£{float(filtered_total_funds or 0):,.2f}")
-        st.caption("Funder filter applies to funding metrics and income trend. Non-funding metrics remain region/timeframe totals.")
-
-        st.markdown("### Partnership Mix")
-        mix_rows = []
-        for sector, count in (p.get("LSP") or {}).items():
-            mix_rows.append({"Type": "Strategic", "Sector": str(sector), "Count": int(count or 0)})
-        for sector, count in (p.get("LDP") or {}).items():
-            mix_rows.append({"Type": "Delivery", "Sector": str(sector), "Count": int(count or 0)})
-        mix_df = pd.DataFrame(mix_rows)
-        if not mix_df.empty:
-            fig_mix = px.bar(mix_df, x="Sector", y="Count", color="Type", barmode="group")
-            render_plot_with_export(fig_mix, "funder-partnership-mix", "funder_partnership_mix")
-        else:
-            st.info("No partnership data available for this selection.")
-
-        st.markdown("### Delivery Demographics (Aggregated)")
-        demo_df = pd.DataFrame(
-            [{"Group": str(k), "Count": int(v or 0)} for k, v in (d.get("demographics") or {}).items()]
+            greeting = "Good evening"
+        st.sidebar.title(f"{greeting}, {st.session_state.get('name', 'User')}")
+        st.sidebar.info(f"Role: {st.session_state.get('role', 'Funder')}")
+    
+        region_options = ["Global", "North of England", "South of England", "Midlands", "Wales", "Other"]
+        role = st.session_state.get("role")
+        assigned_scope = st.session_state.get("region") or "Global"
+        assigned_funder = _decode_funder_scope(assigned_scope)
+        if role == "Funder" and not assigned_funder and assigned_scope not in ("", "Global"):
+            assigned_funder = assigned_scope
+    
+        c_region, c_tf = st.columns([1, 1])
+        with c_region:
+            if role == "Funder":
+                region_val = "Global"
+                st.caption("Region: Global")
+            else:
+                default_index = region_options.index(assigned_scope) if assigned_scope in region_options else 0
+                region_val = st.selectbox("Region", region_options, index=default_index, key="funder_region")
+        with c_tf:
+            timeframe = st.selectbox("Timeframe", ["All Time", "Year", "Quarter", "Month", "Custom Range"], index=0, key="funder_timeframe")
+    
+        today = pd.Timestamp.now().normalize()
+        start_date = None
+        end_date = None
+        if timeframe == "Year":
+            start_date = today - pd.DateOffset(years=1)
+            end_date = today
+        elif timeframe == "Quarter":
+            start_date = today - pd.DateOffset(months=3)
+            end_date = today
+        elif timeframe == "Month":
+            start_date = today - pd.DateOffset(months=1)
+            end_date = today
+        elif timeframe == "Custom Range":
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                custom_start = st.date_input("Start date", value=(today - pd.Timedelta(days=30)).date(), key="funder_start")
+            with cc2:
+                custom_end = st.date_input("End date", value=today.date(), key="funder_end")
+            if custom_end < custom_start:
+                st.error("End date must be on or after start date.")
+                return
+            start_date = pd.Timestamp(custom_start)
+            end_date = pd.Timestamp(custom_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    
+        data = fetch_funder_dashboard_data(
+            region_val,
+            start_date=start_date,
+            end_date=end_date,
+            include_summary=(role != "Funder"),
         )
-        if not demo_df.empty:
-            demo_df = demo_df.sort_values("Count", ascending=False)
-            fig_demo = px.bar(demo_df, x="Group", y="Count")
-            render_plot_with_export(fig_demo, "funder-demographics", "funder_demographics")
+        if not data:
+            st.error("No dashboard data is available for this public view.")
+            return
+    
+        def _funder_key(value):
+            return _norm_key(value)
+    
+        raw_income = data.get("_raw_income", {}) or {}
+        payments_all = raw_income.get("payments") or []
+        grants_all = raw_income.get("grants") or []
+        org_name_lookup = get_organisation_name_lookup()
+        funder_map = {}
+        for fname in get_assigned_funder_names():
+            fk = _funder_key(fname)
+            if fk and fk not in funder_map:
+                funder_map[fk] = fname
+        for row in payments_all + grants_all:
+            fname = _extract_funder_name(row, org_name_lookup=org_name_lookup)
+            fk = _funder_key(fname)
+            if fk and fk not in funder_map:
+                funder_map[fk] = fname
+    
+        if role == "Funder":
+            selected_funder = assigned_funder or "Unknown / Not tagged"
+            selected_funder_key = _funder_key(selected_funder)
+            st.caption(f"Funder: {selected_funder}")
         else:
-            st.info("No demographic summary available for this selection.")
-    else:
-        m1, m2 = st.columns(2)
-        m1.metric("Bids Submitted", _gdpr_safe_count(filtered_bids_submitted))
-        m2.metric("Total Funds Raised", f"£{float(filtered_total_funds or 0):,.2f}")
-
-    st.markdown("### Income Trend (Aggregated, Funder Filtered)")
-    income_rows = []
-    for row in filtered_payments:
-        income_rows.append({
-            "date": row.get("payment_date"),
-            "source": "Payments",
-            "amount": _coerce_money(row.get("amount")),
-        })
-    for row in filtered_grants:
-        income_rows.append({
-            "date": row.get("close_date"),
-            "source": "Grants",
-            "amount": _coerce_money(row.get("amount")),
-        })
-    if income_rows:
-        income_df = pd.DataFrame(income_rows)
-        income_df["date"] = pd.to_datetime(income_df["date"], errors="coerce")
-        income_df = income_df.dropna(subset=["date"])
-        if not income_df.empty:
-            monthly = income_df.groupby([pd.Grouper(key="date", freq="ME"), "source"], as_index=False)["amount"].sum()
-            fig_income = px.line(monthly, x="date", y="amount", color="source", markers=True)
-            render_plot_with_export(fig_income, "funder-income-trend", "funder_income_trend")
+            funder_options = ["All Funders"] + sorted(funder_map.values(), key=lambda x: x.lower())
+            selected_funder = st.selectbox("Funder", funder_options, index=0, key="funder_selector")
+            selected_funder_key = _funder_key(selected_funder)
+    
+        def _row_matches_funder(row):
+            if selected_funder == "All Funders":
+                return True
+            return _funder_key(_extract_funder_name(row, org_name_lookup=org_name_lookup)) == selected_funder_key
+    
+        filtered_payments = [r for r in payments_all if _row_matches_funder(r)]
+        filtered_grants = [r for r in grants_all if _row_matches_funder(r)]
+    
+        filtered_total_funds = sum(_coerce_money(r.get("amount")) for r in filtered_payments)
+        filtered_total_funds += sum(
+            _coerce_money(r.get("amount"))
+            for r in filtered_grants
+            if str(r.get("stage") or "").strip().lower() == "won"
+        )
+        filtered_bids_submitted = sum(
+            1
+            for r in filtered_grants
+            if any(x in str(r.get("stage") or "").lower() for x in ["submitted", "review", "pending"])
+        )
+    
+        last_refresh = get_last_refresh_timestamp()
+        if last_refresh:
+            st.caption(f"Last Data Refresh (UTC): {last_refresh.strftime('%d/%m/%Y %H:%M')}")
         else:
-            st.info("No dated income rows available for trend chart.")
-    else:
-        st.info("No income rows available for trend chart.")
+            st.caption("Last Data Refresh (UTC): Unknown")
+    
+        if role != "Funder":
+            g = data.get("governance", {})
+            p = data.get("partnerships", {})
+            d = data.get("delivery", {})
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Active Volunteers", _gdpr_safe_count(g.get("volunteers_new", 0)))
+            m2.metric("Active Organisations", _gdpr_safe_count(p.get("active_referrals", 0)))
+            m3.metric("Delivery Events", _gdpr_safe_count(d.get("walks_delivered", 0)))
+            m4, m5, m6 = st.columns(3)
+            m4.metric("Participants Reached", _gdpr_safe_count(d.get("participants", 0)))
+            m5.metric("Bids Submitted (Selected Funder)", _gdpr_safe_count(filtered_bids_submitted))
+            m6.metric("Total Funds Raised (Selected Funder)", f"£{float(filtered_total_funds or 0):,.2f}")
+            st.caption("Funder filter applies to funding metrics and income trend. Non-funding metrics remain region/timeframe totals.")
+    
+            st.markdown("### Partnership Mix")
+            mix_rows = []
+            for sector, count in (p.get("LSP") or {}).items():
+                mix_rows.append({"Type": "Strategic", "Sector": str(sector), "Count": int(count or 0)})
+            for sector, count in (p.get("LDP") or {}).items():
+                mix_rows.append({"Type": "Delivery", "Sector": str(sector), "Count": int(count or 0)})
+            mix_df = pd.DataFrame(mix_rows)
+            if not mix_df.empty:
+                fig_mix = px.bar(mix_df, x="Sector", y="Count", color="Type", barmode="group")
+                render_plot_with_export(fig_mix, "funder-partnership-mix", "funder_partnership_mix")
+            else:
+                st.info("No partnership data available for this selection.")
+    
+            st.markdown("### Delivery Demographics (Aggregated)")
+            demo_df = pd.DataFrame(
+                [{"Group": str(k), "Count": int(v or 0)} for k, v in (d.get("demographics") or {}).items()]
+            )
+            if not demo_df.empty:
+                demo_df = demo_df.sort_values("Count", ascending=False)
+                fig_demo = px.bar(demo_df, x="Group", y="Count")
+                render_plot_with_export(fig_demo, "funder-demographics", "funder_demographics")
+            else:
+                st.info("No demographic summary available for this selection.")
+        else:
+            m1, m2 = st.columns(2)
+            m1.metric("Bids Submitted", _gdpr_safe_count(filtered_bids_submitted))
+            m2.metric("Total Funds Raised", f"£{float(filtered_total_funds or 0):,.2f}")
+    
+        st.markdown("### Income Trend (Aggregated, Funder Filtered)")
+        income_rows = []
+        for row in filtered_payments:
+            income_rows.append({
+                "date": row.get("payment_date"),
+                "source": "Payments",
+                "amount": _coerce_money(row.get("amount")),
+            })
+        for row in filtered_grants:
+            income_rows.append({
+                "date": row.get("close_date"),
+                "source": "Grants",
+                "amount": _coerce_money(row.get("amount")),
+            })
+        if income_rows:
+            income_df = pd.DataFrame(income_rows)
+            income_df["date"] = pd.to_datetime(income_df["date"], errors="coerce")
+            income_df = income_df.dropna(subset=["date"])
+            if not income_df.empty:
+                monthly = income_df.groupby([pd.Grouper(key="date", freq="ME"), "source"], as_index=False)["amount"].sum()
+                fig_income = px.line(monthly, x="date", y="amount", color="source", markers=True)
+                render_plot_with_export(fig_income, "funder-income-trend", "funder_income_trend")
+            else:
+                st.info("No dated income rows available for trend chart.")
+        else:
+            st.info("No income rows available for trend chart.")
 def login_page():
     st.markdown("## Login")
     st.markdown(
