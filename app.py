@@ -82,13 +82,15 @@ def reset_password(email, new_password):
     
     if DB_TYPE == 'supabase':
         try:
-            db = get_db_connection()
-            if not db:
-                st.error("Supabase connection failed")
+            admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
+            if not admin_key:
+                st.error("Admin service key not configured")
                 return
             
-            # Get user ID from email
-            role_resp = db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
+            admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
+            
+            # Get user ID from email using admin_db to bypass RLS
+            role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
             if not role_resp.data:
                 st.error(f"User {email} not found")
                 return
@@ -96,12 +98,6 @@ def reset_password(email, new_password):
             user_id = role_resp.data[0]["user_id"]
             
             # Update password via admin
-            admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
-            if not admin_key:
-                st.error("Admin service key not configured")
-                return
-            
-            admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
             admin_db.auth.admin.update_user_by_id(user_id, {"password": new_password})
             
             # Set must_change_password flag
@@ -116,10 +112,11 @@ def reset_password(email, new_password):
             
             st.success(f"✅ Temporary password set for {email}. User will be prompted to change it on next login.")
         except Exception as e:
-            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e):
+            # Handle weak password constraints from Supabase
+            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e) or "at least 6 characters" in str(e):
                 st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
             else:
-                st.error("We encountered an issue updating the password. Please try again.")
+                st.error(f"We encountered an issue updating the password: {e}")
     else:
         # Local mode
         db_data = load_local_json(USER_DB_FILE, {"users": []})
@@ -402,6 +399,7 @@ def password_change_page():
     st.info("Your administrator has set a temporary password. Please create a new permanent password below.")
     
     with st.form("password_change_form"):
+        # The temporary password field has been removed to avoid confusion.
         new_password = st.text_input(
             "New Password",
             type="password",
@@ -433,7 +431,6 @@ def password_change_page():
         # Update password in database
         try:
             if DB_TYPE == 'supabase':
-                db = get_db_connection()
                 admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
                 if not admin_key:
                     st.error("Admin service key not configured")
@@ -441,8 +438,8 @@ def password_change_page():
                 
                 admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
                 
-                # Get user ID
-                role_resp = db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
+                # Get user ID using admin_db to bypass RLS
+                role_resp = admin_db.table('user_roles').select("user_id").eq('email', email).limit(1).execute()
                 if role_resp.data:
                     user_id = role_resp.data[0]["user_id"]
                     
@@ -474,10 +471,11 @@ def password_change_page():
             time.sleep(1)
             st.rerun()
         except Exception as e:
-            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e):
+            # Handle weak password constraints from Supabase
+            if "WeakPassword" in str(e) or "Password should contain at least one" in str(e) or "at least 6 characters" in str(e):
                 st.warning("That password isn't strong enough. Please use at least 6 characters, including an uppercase letter, a lowercase letter, a number, and a symbol.")
             else:
-                st.error("We encountered an issue updating the password. Please try again.")
+                st.error(f"We encountered an issue updating the password: {e}")
 
 def login_page():
     """Login page with password reset flow"""
@@ -528,9 +526,14 @@ def admin_dashboard():
     
     if DB_TYPE == 'supabase':
         try:
-            db = get_db_connection()
-            users_resp = db.table('user_roles').select("email").execute()
-            user_emails = list(set([u.get('email') for u in users_resp.data if u.get('email')]))
+            admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
+            if admin_key:
+                # Use admin_db so we can list ALL users, bypassing any RLS rules
+                admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
+                users_resp = admin_db.table('user_roles').select("email").execute()
+                user_emails = list(set([u.get('email') for u in users_resp.data if u.get('email')]))
+            else:
+                st.error("Admin service key not configured")
         except Exception as e:
             st.error(f"Failed to load users: {e}")
     else:
@@ -566,16 +569,18 @@ def admin_dashboard():
         
         if DB_TYPE == 'supabase':
             try:
-                db = get_db_connection()
-                pending = db.table('user_roles').select("email").eq("must_change_password", True).execute()
-                pending_users = [u.get('email') for u in pending.data if u.get('email')]
-                
-                if pending_users:
-                    st.info(f"**{len(pending_users)} user(s) need to change their password:**")
-                    for user in pending_users:
-                        st.markdown(f"- {user}")
-                else:
-                    st.success("✅ No pending password changes.")
+                admin_key = st.secrets.get("SUPABASE_SERVICE_KEY")
+                if admin_key:
+                    admin_db = create_client(st.secrets.get("SUPABASE_URL"), admin_key)
+                    pending = admin_db.table('user_roles').select("email").eq("must_change_password", True).execute()
+                    pending_users = [u.get('email') for u in pending.data if u.get('email')]
+                    
+                    if pending_users:
+                        st.info(f"**{len(pending_users)} user(s) need to change their password:**")
+                        for user in pending_users:
+                            st.markdown(f"- {user}")
+                    else:
+                        st.success("✅ No pending password changes.")
             except Exception as e:
                 st.error(f"Failed to load pending resets: {e}")
         else:
