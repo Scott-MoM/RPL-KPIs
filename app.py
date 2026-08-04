@@ -21,13 +21,15 @@ from supabase import create_client, Client
 USER_DB_FILE = 'usersAuth.json'
 CASE_STUDIES_FILE = 'case_studies.json'
 
-# Robustly determine DB_TYPE (check environment first, then st.secrets, fallback to local)
+# Robustly determine DB_TYPE (check environment first, then st.secrets, fallback to supabase)
 if 'DB_TYPE' in os.environ:
     DB_TYPE = os.environ['DB_TYPE']
 elif hasattr(st, 'secrets') and 'DB_TYPE' in st.secrets:
     DB_TYPE = st.secrets['DB_TYPE']
+elif hasattr(st, 'secrets') and 'SUPABASE_URL' in st.secrets:
+    DB_TYPE = 'supabase' # Auto-detect Supabase credentials
 else:
-    DB_TYPE = 'local'
+    DB_TYPE = 'supabase' # Default to Supabase as requested
 
 st.set_page_config(page_title="Regional KPI Dashboard", layout="wide")
 
