@@ -5457,7 +5457,6 @@ def ml_dashboard():
             st.info("No dated income rows available for trend chart.")
     else:
         st.info("No income rows available for trend chart.")
-
 def login_page():
     st.markdown("## Login")
     st.markdown(
