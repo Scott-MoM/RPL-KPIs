@@ -3136,6 +3136,31 @@ def _sorted_user_options(users):
     user_options = [user["email"] for user in normalized_users]
     return normalized_users, user_lookup, user_options
 
+def _sorted_user_options(users):
+    normalized_users = []
+    for user in users or []:
+        email = str((user or {}).get("email") or "").strip().lower()
+        if not email:
+            continue
+        name = str((user or {}).get("name") or "").strip() or email
+        normalized_users.append({
+            **(user or {}),
+            "name": name,
+            "email": email,
+        })
+    normalized_users.sort(key=_user_sort_key)
+    user_lookup = {user["email"]: user for user in normalized_users}
+    user_options = [user["email"] for user in normalized_users]
+    return normalized_users, user_lookup, user_options
+
+def _user_option_label(email, user_lookup, include_email=True):
+    user = user_lookup.get(str(email or "").strip().lower()) or {}
+    name = str(user.get("name") or email or "").strip()
+    email_value = str(user.get("email") or email or "").strip().lower()
+    if include_email and email_value:
+        return f"{name} | {email_value}"
+    return name or email_value
+
 def _parse_iso_datetime(value):
     if not value:
         return None
